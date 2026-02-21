@@ -1,3 +1,10 @@
 {
-  "placeholderImages": []
+  "placeholderImages": [
+    {
+      "id": "map-background",
+      "description": "A placeholder image for a map view.",
+      "imageUrl": "https://images.unsplash.com/photo-1718498576179-c8a1cd024476?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3NDE5ODJ8MHwxfHNlYXJjaHw0fHxtYXAlMjBhYnN0cmFjdHxlbnwwfHx8fDE3NzE0NTgyMTR8MA&ixlib=rb-4.1.0&q=80&w=1080",
+      "imageHint": "map abstract"
+    }
+  ]
 }

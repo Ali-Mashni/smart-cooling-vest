@@ -1,0 +1,50 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+    "roles": {
+      ".read": "auth != null",
+      ".write": false
+    },
+    "users": {
+      ".read": "auth != null"
+    },
+    "activeVestByGuard": {
+      ".read": "auth != null",
+      "$guardUid": {
+        ".read": "auth != null",
+        ".write": "auth != null && auth.uid === $guardUid"
+      }
+    },
+    "vests": {
+      ".read": "auth != null",
+      "$vestId": {
+        ".read": "auth != null",
+        "meta": {
+          ".read": "auth != null",
+          ".write": "auth != null"
+        },
+        "current": {
+          ".read": "auth != null",
+          ".write": "auth != null"
+        },
+        "history": {
+          ".read": "auth != null",
+          ".write": "auth != null"
+        },
+        "commands": {
+          "$cmdId": {
+            ".read": "auth != null",
+            ".write": "auth != null"
+          }
+        },
+        "acks": {
+          "$cmdId": {
+            ".read": "auth != null",
+            ".write": "auth != null"
+          }
+        }
+      }
+    }
+  }
+}
