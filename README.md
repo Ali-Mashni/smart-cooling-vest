@@ -140,3 +140,34 @@ A standalone script that imitates the ESP32 controller:
 ## License
 
 Senior design project — not licensed for external use.
+
+## Optional: Run the Virtual Vest Simulator
+
+If you want to simulate vest telemetry locally, use the Python simulator in `simulator/`.
+
+```bash
+# from smart-cooling-vest/
+cd simulator
+
+# create and activate virtual environment
+python -m venv .venv
+# Windows PowerShell
+.\.venv\Scripts\Activate.ps1
+
+# install dependencies
+pip install -r requirements.txt
+
+# create env file and fill values
+copy .env.example .env
+
+# run simulator
+python virtual_vest.py
+```
+
+Set these values in `simulator/.env` before running:
+
+- `FIREBASE_API_KEY`
+- `FIREBASE_DB_URL`
+- `DEVICE_EMAIL`
+- `DEVICE_PASSWORD`
+- `VEST_ID`
