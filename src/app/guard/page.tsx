@@ -9,7 +9,7 @@ import { VestPairing } from '@/components/dashboard/vest-pairing';
 import { useRtdbValue } from '@/hooks/use-rtdb-value';
 import type { VestTelemetry } from '@/lib/types';
 import TelemetryCard from '@/components/dashboard/telemetry-card';
-import { Battery, MapPin, Thermometer, Wifi } from 'lucide-react';
+import { Battery, Thermometer, HeartPulse, Droplets } from 'lucide-react';
 import { ModeControl } from '@/components/dashboard/mode-control';
 import VestMap from '@/components/dashboard/vest-map';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -92,6 +92,12 @@ export default function GuardPage() {
     return <Loader />;
   }
 
+  // Detect if vest is offline (no data for 60+ seconds)
+  const isVestOffline =
+    telemetry && telemetry.lastSeenTs
+      ? (Date.now() - telemetry.lastSeenTs) / 1000 >= 60
+      : false;
+
   const renderTelemetry = () => {
     if (!pairedVestId) {
       return (
@@ -120,12 +126,6 @@ export default function GuardPage() {
     return (
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
           <TelemetryCard
-            title="Mode"
-            value={telemetry.mode}
-            icon={<Wifi />}
-            statusTs={telemetry.lastSeenTs}
-          />
-          <TelemetryCard
             title="Skin Temp"
             value={`${telemetry.skinTemp.toFixed(1)} °C`}
             icon={<Thermometer />}
@@ -138,9 +138,16 @@ export default function GuardPage() {
             percentageValue={telemetry.batteryPct}
           />
           <TelemetryCard
-            title="GPS"
-            value={`${telemetry.gps.lat.toFixed(4)}, ${telemetry.gps.lng.toFixed(4)}`}
-            icon={<MapPin />}
+            title="Heart Rate"
+            value={telemetry.heartRateBpm !== undefined ? `${telemetry.heartRateBpm}` : '—'}
+            icon={<HeartPulse />}
+            unit="bpm"
+          />
+          <TelemetryCard
+            title="SpO₂"
+            value={telemetry.spo2Pct !== undefined ? `${telemetry.spo2Pct}` : '—'}
+            icon={<Droplets />}
+            unit="%"
             statusTs={telemetry.lastSeenTs}
           />
         </div>
@@ -161,7 +168,7 @@ export default function GuardPage() {
         <div className="grid auto-rows-max items-start gap-4 lg:col-span-1 xl:col-span-2 md:gap-8">
             {renderTelemetry()}
             <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-2">
-              <ModeControl vestId={pairedVestId} currentMode={telemetry?.mode} />
+              <ModeControl vestId={pairedVestId} currentMode={telemetry?.mode} isOffline={isVestOffline} />
               <VestMap gps={telemetry?.gps} />
             </div>
         </div>

@@ -12,12 +12,11 @@ import { useRtdbValue } from '@/hooks/use-rtdb-value';
 import TelemetryCard from '@/components/dashboard/telemetry-card';
 import {
   Battery,
-  MapPin,
   Thermometer,
-  Wifi,
+  Droplets,
   ArrowLeft,
+  HeartPulse,
 } from 'lucide-react';
-import { ModeControl } from '@/components/dashboard/mode-control';
 import VestMap from '@/components/dashboard/vest-map';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Button } from '@/components/ui/button';
@@ -66,12 +65,6 @@ function SupervisorVestDetail({ vestId }: { vestId: string }) {
     return (
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         <TelemetryCard
-          title="Mode"
-          value={telemetry.mode}
-          icon={<Wifi />}
-          statusTs={telemetry.lastSeenTs}
-        />
-        <TelemetryCard
           title="Skin Temp"
           value={`${telemetry.skinTemp.toFixed(1)} °C`}
           icon={<Thermometer />}
@@ -84,11 +77,16 @@ function SupervisorVestDetail({ vestId }: { vestId: string }) {
           percentageValue={telemetry.batteryPct}
         />
         <TelemetryCard
-          title="GPS"
-          value={`${telemetry.gps.lat.toFixed(4)}, ${telemetry.gps.lng.toFixed(
-            4
-          )}`}
-          icon={<MapPin />}
+          title="Heart Rate"
+          value={telemetry.heartRateBpm !== undefined ? `${telemetry.heartRateBpm}` : '—'}
+          icon={<HeartPulse />}
+          unit="bpm"
+        />
+        <TelemetryCard
+          title="SpO₂"
+          value={telemetry.spo2Pct !== undefined ? `${telemetry.spo2Pct}` : '—'}
+          icon={<Droplets />}
+          unit="%"
           statusTs={telemetry.lastSeenTs}
         />
       </div>
@@ -110,12 +108,11 @@ function SupervisorVestDetail({ vestId }: { vestId: string }) {
       </div>
       <div className="grid gap-4 md:gap-8">
         {renderTelemetry()}
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-7">
-          <div className="lg:col-span-3 space-y-4">
-            <ModeControl vestId={vestId} currentMode={telemetry?.mode} />
+        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+          <div className="lg:col-span-1">
             <VestMap gps={telemetry?.gps} />
           </div>
-          <div className="lg:col-span-4">
+          <div className="lg:col-span-2">
             <VestHistoryChart vestId={vestId} />
           </div>
         </div>

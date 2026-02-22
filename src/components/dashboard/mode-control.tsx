@@ -7,16 +7,18 @@ import { getDatabase, ref, serverTimestamp, set, push, onValue, type Unsubscribe
 import { useState } from 'react';
 import { useToast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
-import { Loader2 } from 'lucide-react';
+import { Loader2, AlertCircle } from 'lucide-react';
+import { Alert, AlertDescription } from '../ui/alert';
 
 const MODES: VestMode[] = ['Off', 'Eco', 'Normal', 'Boost'];
 
 interface ModeControlProps {
   vestId: string | null;
   currentMode?: VestMode;
+  isOffline?: boolean;
 }
 
-export function ModeControl({ vestId, currentMode }: ModeControlProps) {
+export function ModeControl({ vestId, currentMode, isOffline }: ModeControlProps) {
   const [pendingCommand, setPendingCommand] = useState<string | null>(null);
   const { toast } = useToast();
 
@@ -29,6 +31,17 @@ export function ModeControl({ vestId, currentMode }: ModeControlProps) {
       });
       return;
     }
+
+    // Prevent command if vest is offline
+    if (isOffline) {
+      toast({
+        variant: 'destructive',
+        title: 'Vest Offline',
+        description: 'Cannot send commands. The vest is currently offline.',
+      });
+      return;
+    }
+
     setPendingCommand(mode);
     const db = getDatabase();
     const commandsRef = ref(db, `/vests/${vestId}/commands`);
@@ -97,14 +110,26 @@ export function ModeControl({ vestId, currentMode }: ModeControlProps) {
         <CardTitle>Mode Control</CardTitle>
         <CardDescription>Set the operational mode of the vest.</CardDescription>
       </CardHeader>
-      <CardContent>
+      <CardContent className="space-y-4">
+        {isOffline && (
+          <Alert variant="destructive">
+            <AlertCircle className="h-4 w-4" />
+            <AlertDescription>
+              Vest is offline — controls disabled.
+            </AlertDescription>
+          </Alert>
+        )}
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
           {MODES.map((mode) => (
             <Button
               key={mode}
-              variant={currentMode === mode ? 'default' : 'outline'}
-              className={cn("w-full", pendingCommand === mode && 'opacity-50')}
-              disabled={!vestId || !!pendingCommand}
+              variant="outline"
+              className={cn(
+                'w-full',
+                currentMode === mode && 'border-primary bg-primary text-primary-foreground hover:bg-primary/90',
+                pendingCommand === mode && 'opacity-50'
+              )}
+              disabled={!vestId || !!pendingCommand || isOffline}
               onClick={() => handleModeChange(mode)}
             >
               {pendingCommand === mode && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
