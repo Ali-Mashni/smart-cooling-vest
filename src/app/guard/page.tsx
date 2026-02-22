@@ -13,7 +13,7 @@ import { Battery, MapPin, Thermometer, Wifi } from 'lucide-react';
 import { ModeControl } from '@/components/dashboard/mode-control';
 import VestMap from '@/components/dashboard/vest-map';
 import { Skeleton } from '@/components/ui/skeleton';
-import { getDatabase, ref, set } from 'firebase/database';
+import { getDatabase, ref, set, get } from 'firebase/database';
 
 export default function GuardPage() {
   const { user, loading: authLoading } = useAuth();
@@ -36,16 +36,53 @@ export default function GuardPage() {
 
   const handlePairVest = async (vestId: string) => {
     if (!user) return;
-    setPairing(true);
+
     const db = getDatabase();
-    const vestRef = ref(db, `activeVestByGuard/${user.uid}`);
+    
+    // Trim input (preserve casing — backend will handle casing convention)
+    const trimmedId = vestId.trim();
+    
+    if (!trimmedId) {
+      const error = new Error('Vest ID cannot be empty.');
+      (error as any).isValidationError = true;
+      throw error;
+    }
+
+    setPairing(true);
+
     try {
-      // The useRtdbValue hook will automatically update pairedVestId
-      await set(vestRef, vestId);
-    } catch (e) {
-      console.error(e);
-      // Let the pairing component handle the toast for errors
-      throw e;
+      // Validate vest exists by checking vests/{vestId}/current
+      // (meta node defined in rules but not used in current schema)
+      const currentRef = ref(db, `vests/${trimmedId}/current`);
+      const currentSnapshot = await get(currentRef);
+
+      if (!currentSnapshot.exists()) {
+        const error = new Error('Invalid vest ID. Please check and try again.');
+        (error as any).isValidationError = true;
+        throw error;
+      }
+
+      // Vest exists, safe to write pairing mapping
+      const pairingRef = ref(db, `activeVestByGuard/${user.uid}`);
+      await set(pairingRef, trimmedId);
+
+      // Success — component handles feedback
+    } catch (e: any) {
+      // Log only unexpected errors, not validation errors
+      if (!e.isValidationError) {
+        console.error('Pairing validation/write failed:', e);
+      }
+      
+      // Re-throw with user-friendly message
+      if (e.message.includes('Invalid vest ID') || e.message.includes('cannot be empty')) {
+        throw e; // Already user-friendly
+      } else if (e.code === 'PERMISSION_DENIED') {
+        throw new Error('Permission denied. Please check your access rights.');
+      } else if (e.message.includes('offline')) {
+        throw new Error('You appear to be offline. Please check your connection.');
+      } else {
+        throw new Error(e.message || 'An unexpected error occurred during pairing.');
+      }
     } finally {
       setPairing(false);
     }
@@ -124,8 +161,8 @@ export default function GuardPage() {
         <div className="grid auto-rows-max items-start gap-4 lg:col-span-1 xl:col-span-2 md:gap-8">
             {renderTelemetry()}
             <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-2">
-                <ModeControl vestId={pairedVestId} currentMode={telemetry?.mode} />
-                <VestMap gps={telemetry?.gps} />
+              <ModeControl vestId={pairedVestId} currentMode={telemetry?.mode} />
+              <VestMap gps={telemetry?.gps} />
             </div>
         </div>
       </div>
