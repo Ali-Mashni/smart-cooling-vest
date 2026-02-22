@@ -28,6 +28,14 @@ yarn-error.log*
 # local env files
 .env*.local
 
+# simulator (python)
+/simulator/.env
+/simulator/.venv/
+
+# python cache
+__pycache__/
+*.py[cod]
+
 # vercel
 .vercel
 
