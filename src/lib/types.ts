@@ -3,6 +3,8 @@ export type VestMode = 'Off' | 'Eco' | 'Normal' | 'Boost';
 export interface GpsData {
   lat: number;
   lng: number;
+  accuracyM?: number;
+  fix?: boolean;
 }
 
 export interface VestTelemetry {
@@ -11,6 +13,8 @@ export interface VestTelemetry {
   mode: VestMode;
   lastSeenTs: number;
   gps: GpsData;
+  heartRateBpm?: number;
+  spo2Pct?: number;
 }
 
 export interface VestHistoryPoint {
