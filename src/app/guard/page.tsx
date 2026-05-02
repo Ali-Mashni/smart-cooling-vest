@@ -10,61 +10,53 @@ import { useEffect, useState } from 'react';
 import { VestPairing } from '@/components/dashboard/vest-pairing';
 import { useRtdbValue } from '@/hooks/use-rtdb-value';
 import type { VestTelemetry, GpsData } from '@/lib/types';
-import { normalizeMetric, type NormalizedMetric } from '@/lib/telemetry-normalization';
-import { Battery, Thermometer, Droplets, Gauge, Wind, Zap, Activity, Timer } from 'lucide-react';
+import {
+  normalizeMetric,
+  type NormalizedMetric,
+  type MetricStatusTone,
+} from '@/lib/telemetry-normalization';
+import { Battery, Thermometer, HeartPulse, Droplets, Wind } from 'lucide-react';
 import { ModeControl } from '@/components/dashboard/mode-control';
 import VestMap from '@/components/dashboard/vest-map';
-import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
 import { getDatabase, ref, set, get } from 'firebase/database';
 
 type LastValidTelemetry = {
-  skinTemp?: number;
-  batteryPct?: number;
-  heartRateBpm?: number;
-  spo2Pct?: number;
-  inletTemp?: number;
-  outletTemp?: number;
-  bodyTemp?: number;
-  pcmTemp?: number;
-  ppgTemp?: number;
-  ambientTemp?: number;
-  humidity?: number;
-  batteryVoltage?: number;
-  batteryCurrentMa?: number;
-  batteryPowerMw?: number;
-  flowRateLMin?: number;
-  flowTotalL?: number;
-  pumpPct?: number;
   gps?: GpsData;
 };
 
 const isValidNumber = (value: unknown): value is number =>
   typeof value === 'number' && Number.isFinite(value);
 
+const isNonZeroNumber = (value: unknown): value is number =>
+  isValidNumber(value) && value !== 0;
+
 const isValidSkinTemp = (value: unknown): value is number =>
-  isValidNumber(value) && value >= 20 && value <= 45;
+  isNonZeroNumber(value) && value >= 20 && value <= 45;
 
 const isValidBattery = (value: unknown): value is number =>
-  isValidNumber(value) && value >= 0 && value <= 100;
+  isNonZeroNumber(value) && value >= 0 && value <= 100;
 
 const isValidHeartRate = (value: unknown): value is number =>
-  isValidNumber(value) && value >= 30 && value <= 220;
+  isNonZeroNumber(value) && value >= 30 && value <= 220;
 
 const isValidSpo2 = (value: unknown): value is number =>
-  isValidNumber(value) && value >= 70 && value <= 100;
+  isNonZeroNumber(value) && value >= 70 && value <= 100;
 
 const isValidTemp = (value: unknown): value is number =>
-  isValidNumber(value) && value >= -20 && value <= 85;
+  isNonZeroNumber(value) && value >= -20 && value <= 85;
+
+const isValidBodyTemp = (value: unknown): value is number =>
+  isNonZeroNumber(value) && value >= 25 && value <= 45;
 
 const isValidHumidity = (value: unknown): value is number =>
-  isValidNumber(value) && value >= 0 && value <= 100;
+  isNonZeroNumber(value) && value >= 0 && value <= 100;
 
 const isValidPumpPct = (value: unknown): value is number =>
   isValidNumber(value) && value >= 0 && value <= 100;
 
-const isValidNonNegative = (value: unknown): value is number =>
-  isValidNumber(value) && value >= 0;
+const isValidPositive = (value: unknown): value is number =>
+  isNonZeroNumber(value) && value > 0;
 
 const isValidGps = (gps?: GpsData): gps is GpsData =>
   !!gps &&
@@ -82,6 +74,15 @@ const STALE_THRESHOLDS_MS = {
   ina260: 15000,
   flow: 15000,
 };
+
+const PCM_TEMP_THRESHOLDS_C = {
+  coldMax: 18,
+  warmMax: 26,
+};
+
+const FLOW_OK_MIN_L_MIN = 0.3;
+const LOOP_DELTA_ACTIVE_C = 0.8;
+const LOOP_DELTA_LOW_C = 0.3;
 
 const formatAge = (ageMs?: number) => {
   if (ageMs === undefined || ageMs === null || ageMs < 0) {
@@ -106,24 +107,7 @@ const formatAge = (ageMs?: number) => {
   return `${days}d ago`;
 };
 
-const formatDuration = (durationMs?: number) => {
-  if (durationMs === undefined || durationMs === null || durationMs < 0) {
-    return '—';
-  }
-  const totalSeconds = Math.floor(durationMs / 1000);
-  const days = Math.floor(totalSeconds / 86400);
-  const hours = Math.floor((totalSeconds % 86400) / 3600);
-  const minutes = Math.floor((totalSeconds % 3600) / 60);
-  if (days > 0) {
-    return `${days}d ${hours}h`;
-  }
-  if (hours > 0) {
-    return `${hours}h ${minutes}m`;
-  }
-  return `${minutes}m`;
-};
-
-const statusToneClasses: Record<NormalizedMetric<unknown>['statusTone'], string> = {
+const statusToneClasses: Record<MetricStatusTone, string> = {
   ok: 'border-emerald-500/40 bg-emerald-500/10 text-emerald-700',
   warn: 'border-amber-500/40 bg-amber-500/10 text-amber-700',
   danger: 'border-rose-500/40 bg-rose-500/10 text-rose-700',
@@ -131,34 +115,100 @@ const statusToneClasses: Record<NormalizedMetric<unknown>['statusTone'], string>
   info: 'border-sky-500/40 bg-sky-500/10 text-sky-700',
 };
 
-const StatusBadge = ({ metric }: { metric: NormalizedMetric<unknown> }) => (
+const StatusPill = ({ label, tone }: { label: string; tone: MetricStatusTone }) => (
   <Badge
     variant="outline"
-    className={cn(
-      'text-[10px] uppercase tracking-wide',
-      statusToneClasses[metric.statusTone]
-    )}
+    className={cn('text-[10px] uppercase tracking-wide', statusToneClasses[tone])}
   >
-    {metric.statusLabel}
+    {label}
   </Badge>
 );
 
-const MetricRow = ({
+const StatusBadge = ({ metric }: { metric: NormalizedMetric<unknown> }) => (
+  <StatusPill label={metric.statusLabel} tone={metric.statusTone} />
+);
+
+const TopStat = ({
   label,
-  metric,
-  helper,
+  value,
+  status,
 }: {
   label: string;
-  metric: NormalizedMetric<number | string>;
-  helper?: string;
+  value: string;
+  status?: { label: string; tone: MetricStatusTone };
 }) => (
   <div className="flex items-center justify-between gap-3 rounded-md border border-border/60 bg-background/70 px-3 py-2">
     <div className="min-w-0">
-      <p className="text-xs text-muted-foreground">{label}</p>
-      <p className="truncate text-sm font-semibold">{metric.formattedValue}</p>
-      {helper && <p className="text-[11px] text-muted-foreground">{helper}</p>}
+      <p className="text-[11px] text-muted-foreground">{label}</p>
+      <p className="truncate text-sm font-semibold">{value}</p>
     </div>
-    <StatusBadge metric={metric} />
+    {status && <StatusPill label={status.label} tone={status.tone} />}
+  </div>
+);
+
+const LiveMetricCard = ({
+  title,
+  metric,
+  icon,
+  helper,
+}: {
+  title: string;
+  metric: NormalizedMetric<number | string>;
+  icon?: React.ReactNode;
+  helper?: string;
+}) => (
+  <div className="rounded-md border border-border/60 bg-background/70 px-3 py-3">
+    <div className="flex items-center justify-between text-xs text-muted-foreground">
+      <span>{title}</span>
+      {icon}
+    </div>
+    <div className="mt-2 flex items-end justify-between gap-2">
+      <div className="text-2xl font-semibold">{metric.formattedValue}</div>
+      <StatusBadge metric={metric} />
+    </div>
+    {helper && <p className="mt-1 text-[11px] text-muted-foreground">{helper}</p>}
+  </div>
+);
+
+const CompactMetricCard = ({
+  title,
+  metric,
+  helper,
+}: {
+  title: string;
+  metric: NormalizedMetric<number | string>;
+  helper?: string;
+}) => (
+  <div className="rounded-md border border-border/60 bg-background/70 px-3 py-2">
+    <div className="flex items-center justify-between">
+      <p className="text-xs text-muted-foreground">{title}</p>
+      <StatusBadge metric={metric} />
+    </div>
+    <p className="mt-2 text-lg font-semibold">{metric.formattedValue}</p>
+    {helper && <p className="mt-1 text-[11px] text-muted-foreground">{helper}</p>}
+  </div>
+);
+
+const DerivedStatusCard = ({
+  title,
+  value,
+  statusLabel,
+  statusTone,
+  helper,
+}: {
+  title: string;
+  value: string;
+  statusLabel: string;
+  statusTone: MetricStatusTone;
+  helper?: string;
+}) => (
+  <div className="rounded-md border border-border/60 bg-background/70 px-3 py-2">
+    <div className="flex items-center justify-between">
+      <p className="text-xs text-muted-foreground">{title}</p>
+      <StatusPill label={statusLabel} tone={statusTone} />
+    </div>
+    <p className="mt-2 text-sm font-semibold">{value}</p>
+    {helper && <p className="mt-1 text-[11px] text-muted-foreground">{helper}</p>}
   </div>
 );
 
@@ -201,57 +251,6 @@ export default function GuardPage() {
     setLastValid((prev) => {
       const next: LastValidTelemetry = { ...prev };
 
-      if (isValidSkinTemp(telemetry.skinTemp)) {
-        next.skinTemp = telemetry.skinTemp;
-      }
-      if (isValidBattery(telemetry.batteryPct)) {
-        next.batteryPct = telemetry.batteryPct;
-      }
-      if (isValidHeartRate(telemetry.heartRateBpm) && telemetry.sensorOk?.ppg !== false) {
-        next.heartRateBpm = telemetry.heartRateBpm;
-      }
-      if (isValidSpo2(telemetry.spo2Pct) && telemetry.sensorOk?.ppg !== false) {
-        next.spo2Pct = telemetry.spo2Pct;
-      }
-      if (isValidTemp(telemetry.inletTemp) && telemetry.sensorOk?.inlet !== false) {
-        next.inletTemp = telemetry.inletTemp;
-      }
-      if (isValidTemp(telemetry.outletTemp) && telemetry.sensorOk?.outlet !== false) {
-        next.outletTemp = telemetry.outletTemp;
-      }
-      if (isValidTemp(telemetry.bodyTemp) && telemetry.sensorOk?.body !== false) {
-        next.bodyTemp = telemetry.bodyTemp;
-      }
-      if (isValidTemp(telemetry.pcmTemp) && telemetry.sensorOk?.pcm !== false) {
-        next.pcmTemp = telemetry.pcmTemp;
-      }
-      if (isValidTemp(telemetry.ppgTemp) && telemetry.sensorOk?.ppg !== false) {
-        next.ppgTemp = telemetry.ppgTemp;
-      }
-      if (isValidTemp(telemetry.ambientTemp) && telemetry.sensorOk?.dht !== false) {
-        next.ambientTemp = telemetry.ambientTemp;
-      }
-      if (isValidHumidity(telemetry.humidity) && telemetry.sensorOk?.dht !== false) {
-        next.humidity = telemetry.humidity;
-      }
-      if (isValidNonNegative(telemetry.batteryVoltage) && telemetry.sensorOk?.ina260 !== false) {
-        next.batteryVoltage = telemetry.batteryVoltage;
-      }
-      if (isValidNonNegative(telemetry.batteryCurrentMa) && telemetry.sensorOk?.ina260 !== false) {
-        next.batteryCurrentMa = telemetry.batteryCurrentMa;
-      }
-      if (isValidNonNegative(telemetry.batteryPowerMw) && telemetry.sensorOk?.ina260 !== false) {
-        next.batteryPowerMw = telemetry.batteryPowerMw;
-      }
-      if (isValidNonNegative(telemetry.flowRateLMin) && telemetry.sensorOk?.flow !== false) {
-        next.flowRateLMin = telemetry.flowRateLMin;
-      }
-      if (isValidNonNegative(telemetry.flowTotalL) && telemetry.sensorOk?.flow !== false) {
-        next.flowTotalL = telemetry.flowTotalL;
-      }
-      if (isValidPumpPct(telemetry.pumpPct)) {
-        next.pumpPct = telemetry.pumpPct;
-      }
       if (isValidGps(telemetry.gps) && telemetry.sensorOk?.gnss !== false) {
         next.gps = telemetry.gps;
       }
@@ -324,200 +323,449 @@ export default function GuardPage() {
       ? (now - telemetry.lastSeenTs) / 1000 >= 60
       : false;
 
-  const currentGpsValid = telemetry ? isValidGps(telemetry.gps) : false;
-
-  const metrics = {
-    skinTemp: normalizeMetric(telemetry?.skinTemp, {
-      unit: '°C',
-      decimals: 1,
-      validate: isValidSkinTemp,
-      lastValidValue: lastValid.skinTemp,
-      isOffline: isVestOffline,
-      ageMs: telemetry?.sensorAgeMs?.temp,
-      staleAfterMs: STALE_THRESHOLDS_MS.temp,
-    }),
-    bodyTemp: normalizeMetric(telemetry?.bodyTemp, {
-      unit: '°C',
-      decimals: 1,
-      validate: isValidTemp,
-      sensorOk: telemetry?.sensorOk?.body,
-      lastValidValue: lastValid.bodyTemp,
-      isOffline: isVestOffline,
-      ageMs: telemetry?.sensorAgeMs?.temp,
-      staleAfterMs: STALE_THRESHOLDS_MS.temp,
-    }),
-    heartRateBpm: normalizeMetric(telemetry?.heartRateBpm, {
-      unit: 'bpm',
-      validate: isValidHeartRate,
-      sensorOk: telemetry?.sensorOk?.ppg,
-      lastValidValue: lastValid.heartRateBpm,
-      isOffline: isVestOffline,
-      ageMs: telemetry?.sensorAgeMs?.ppg,
-      staleAfterMs: STALE_THRESHOLDS_MS.ppg,
-    }),
-    spo2Pct: normalizeMetric(telemetry?.spo2Pct, {
-      unit: '%',
-      validate: isValidSpo2,
-      sensorOk: telemetry?.sensorOk?.ppg,
-      lastValidValue: lastValid.spo2Pct,
-      isOffline: isVestOffline,
-      ageMs: telemetry?.sensorAgeMs?.ppg,
-      staleAfterMs: STALE_THRESHOLDS_MS.ppg,
-    }),
-    ppgTemp: normalizeMetric(telemetry?.ppgTemp, {
-      unit: '°C',
-      decimals: 1,
-      validate: isValidTemp,
-      sensorOk: telemetry?.sensorOk?.ppg,
-      lastValidValue: lastValid.ppgTemp,
-      isOffline: isVestOffline,
-      ageMs: telemetry?.sensorAgeMs?.ppg,
-      staleAfterMs: STALE_THRESHOLDS_MS.ppg,
-    }),
-    inletTemp: normalizeMetric(telemetry?.inletTemp, {
-      unit: '°C',
-      decimals: 1,
-      validate: isValidTemp,
-      sensorOk: telemetry?.sensorOk?.inlet,
-      lastValidValue: lastValid.inletTemp,
-      isOffline: isVestOffline,
-      ageMs: telemetry?.sensorAgeMs?.temp,
-      staleAfterMs: STALE_THRESHOLDS_MS.temp,
-    }),
-    outletTemp: normalizeMetric(telemetry?.outletTemp, {
-      unit: '°C',
-      decimals: 1,
-      validate: isValidTemp,
-      sensorOk: telemetry?.sensorOk?.outlet,
-      lastValidValue: lastValid.outletTemp,
-      isOffline: isVestOffline,
-      ageMs: telemetry?.sensorAgeMs?.temp,
-      staleAfterMs: STALE_THRESHOLDS_MS.temp,
-    }),
-    pcmTemp: normalizeMetric(telemetry?.pcmTemp, {
-      unit: '°C',
-      decimals: 1,
-      validate: isValidTemp,
-      sensorOk: telemetry?.sensorOk?.pcm,
-      lastValidValue: lastValid.pcmTemp,
-      isOffline: isVestOffline,
-      ageMs: telemetry?.sensorAgeMs?.temp,
-      staleAfterMs: STALE_THRESHOLDS_MS.temp,
-    }),
-    flowRateLMin: normalizeMetric(telemetry?.flowRateLMin, {
-      unit: 'L/min',
-      decimals: 2,
-      validate: isValidNonNegative,
-      sensorOk: telemetry?.sensorOk?.flow,
-      lastValidValue: lastValid.flowRateLMin,
-      isOffline: isVestOffline,
-      ageMs: telemetry?.sensorAgeMs?.flow,
-      staleAfterMs: STALE_THRESHOLDS_MS.flow,
-    }),
-    flowTotalL: normalizeMetric(telemetry?.flowTotalL, {
-      unit: 'L',
-      decimals: 2,
-      validate: isValidNonNegative,
-      sensorOk: telemetry?.sensorOk?.flow,
-      lastValidValue: lastValid.flowTotalL,
-      isOffline: isVestOffline,
-      ageMs: telemetry?.sensorAgeMs?.flow,
-      staleAfterMs: STALE_THRESHOLDS_MS.flow,
-    }),
-    pumpPct: normalizeMetric(telemetry?.pumpPct, {
-      unit: '%',
-      decimals: 0,
-      validate: isValidPumpPct,
-      lastValidValue: lastValid.pumpPct,
-      isOffline: isVestOffline,
-    }),
-    ambientTemp: normalizeMetric(telemetry?.ambientTemp, {
-      unit: '°C',
-      decimals: 1,
-      validate: isValidTemp,
-      sensorOk: telemetry?.sensorOk?.dht,
-      lastValidValue: lastValid.ambientTemp,
-      isOffline: isVestOffline,
-      ageMs: telemetry?.sensorAgeMs?.dht,
-      staleAfterMs: STALE_THRESHOLDS_MS.dht,
-    }),
-    humidity: normalizeMetric(telemetry?.humidity, {
-      unit: '%',
-      decimals: 0,
-      validate: isValidHumidity,
-      sensorOk: telemetry?.sensorOk?.dht,
-      lastValidValue: lastValid.humidity,
-      isOffline: isVestOffline,
-      ageMs: telemetry?.sensorAgeMs?.dht,
-      staleAfterMs: STALE_THRESHOLDS_MS.dht,
-    }),
-    batteryPct: normalizeMetric(telemetry?.batteryPct, {
-      unit: '%',
-      decimals: 0,
-      validate: isValidBattery,
-      sensorOk: telemetry?.sensorOk?.ina260,
-      lastValidValue: lastValid.batteryPct,
-      isOffline: isVestOffline,
-      ageMs: telemetry?.sensorAgeMs?.ina260,
-      staleAfterMs: STALE_THRESHOLDS_MS.ina260,
-    }),
-    batteryVoltage: normalizeMetric(telemetry?.batteryVoltage, {
-      unit: 'V',
-      decimals: 2,
-      validate: isValidNonNegative,
-      sensorOk: telemetry?.sensorOk?.ina260,
-      lastValidValue: lastValid.batteryVoltage,
-      isOffline: isVestOffline,
-      ageMs: telemetry?.sensorAgeMs?.ina260,
-      staleAfterMs: STALE_THRESHOLDS_MS.ina260,
-    }),
-    batteryCurrentMa: normalizeMetric(telemetry?.batteryCurrentMa, {
-      unit: 'mA',
-      decimals: 0,
-      validate: isValidNonNegative,
-      sensorOk: telemetry?.sensorOk?.ina260,
-      lastValidValue: lastValid.batteryCurrentMa,
-      isOffline: isVestOffline,
-      ageMs: telemetry?.sensorAgeMs?.ina260,
-      staleAfterMs: STALE_THRESHOLDS_MS.ina260,
-    }),
-    batteryPowerMw: normalizeMetric(telemetry?.batteryPowerMw, {
-      unit: 'mW',
-      decimals: 0,
-      validate: isValidNonNegative,
-      sensorOk: telemetry?.sensorOk?.ina260,
-      lastValidValue: lastValid.batteryPowerMw,
-      isOffline: isVestOffline,
-      ageMs: telemetry?.sensorAgeMs?.ina260,
-      staleAfterMs: STALE_THRESHOLDS_MS.ina260,
-    }),
-    gps: normalizeMetric(telemetry?.gps, {
-      validate: isValidGps,
-      sensorOk: telemetry?.sensorOk?.gnss,
-      lastValidValue: lastValid.gps,
-      isOffline: isVestOffline,
-      ageMs: telemetry?.sensorAgeMs?.gnss,
-      staleAfterMs: STALE_THRESHOLDS_MS.gnss,
-    }),
-  };
-
-  const displayedGps = metrics.gps.displayValue;
-  let gpsStatusMessage: string | undefined;
-  if (!displayedGps) {
-    gpsStatusMessage = 'No GPS data available.';
-  } else if (!currentGpsValid && metrics.gps.source === 'lastValid') {
-    gpsStatusMessage = 'No current GPS fix. Showing last known location.';
-  } else if (metrics.gps.isStale) {
-    gpsStatusMessage = 'GPS data is stale.';
-  } else if (displayedGps.fix === false) {
-    gpsStatusMessage = 'No GPS fix available.';
-  }
-
   const lastSeenAgeMs = telemetry?.lastSeenTs ? now - telemetry.lastSeenTs : undefined;
   const hasPairing = !!pairedVestId;
-  const hasTelemetry = !!telemetry;
+
+  const criticalLabels = {
+    live: 'Live',
+    stale: 'Stale',
+    offline: 'Offline',
+    missing: 'No live reading',
+    invalid: 'No live reading',
+    zero: 'No live reading',
+  };
+
+  const ppgLabels = {
+    ...criticalLabels,
+    zero: 'Waiting for finger',
+  };
+
+  const derivedLabels = {
+    live: 'Live',
+    stale: 'Stale',
+    offline: 'Unavailable',
+    missing: 'Unavailable',
+    invalid: 'Unavailable',
+    zero: 'Unavailable',
+    unavailable: 'Unavailable',
+  };
+
+  const controlLabels = {
+    live: 'Live',
+    stale: 'Stale',
+    offline: 'Offline',
+    lastReceived: 'Last received',
+    missing: 'Unavailable',
+    invalid: 'Unavailable',
+    zero: 'Unavailable',
+  };
+
+  const skinMetric = normalizeMetric(telemetry?.skinTemp, {
+    category: 'criticalLive',
+    unit: '°C',
+    decimals: 1,
+    validate: isValidSkinTemp,
+    isOffline: isVestOffline,
+    ageMs: telemetry?.sensorAgeMs?.temp,
+    staleAfterMs: STALE_THRESHOLDS_MS.temp,
+    labels: criticalLabels,
+  });
+
+  const bodyMetric = normalizeMetric(telemetry?.bodyTemp, {
+    category: 'criticalLive',
+    unit: '°C',
+    decimals: 1,
+    validate: isValidBodyTemp,
+    sensorOk: telemetry?.sensorOk?.body,
+    isOffline: isVestOffline,
+    ageMs: telemetry?.sensorAgeMs?.temp,
+    staleAfterMs: STALE_THRESHOLDS_MS.temp,
+    labels: criticalLabels,
+  });
+
+  const heartMetric = normalizeMetric(telemetry?.heartRateBpm, {
+    category: 'criticalLive',
+    unit: 'bpm',
+    validate: isValidHeartRate,
+    sensorOk: telemetry?.sensorOk?.ppg,
+    isOffline: isVestOffline,
+    ageMs: telemetry?.sensorAgeMs?.ppg,
+    staleAfterMs: STALE_THRESHOLDS_MS.ppg,
+    labels: ppgLabels,
+  });
+
+  const spo2Metric = normalizeMetric(telemetry?.spo2Pct, {
+    category: 'criticalLive',
+    unit: '%',
+    validate: isValidSpo2,
+    sensorOk: telemetry?.sensorOk?.ppg,
+    isOffline: isVestOffline,
+    ageMs: telemetry?.sensorAgeMs?.ppg,
+    staleAfterMs: STALE_THRESHOLDS_MS.ppg,
+    labels: ppgLabels,
+  });
+
+  const pumpMetric = normalizeMetric(telemetry?.pumpPct, {
+    category: 'control',
+    unit: '%',
+    decimals: 0,
+    validate: isValidPumpPct,
+    isOffline: isVestOffline,
+    labels: controlLabels,
+  });
+
+  const batteryMetric = normalizeMetric(telemetry?.batteryPct, {
+    category: 'control',
+    unit: '%',
+    decimals: 0,
+    validate: isValidBattery,
+    sensorOk: telemetry?.sensorOk?.ina260,
+    isOffline: isVestOffline,
+    ageMs: telemetry?.sensorAgeMs?.ina260,
+    staleAfterMs: STALE_THRESHOLDS_MS.ina260,
+    allowZero: false,
+    labels: controlLabels,
+  });
+
+  const ambientMetric = normalizeMetric(telemetry?.ambientTemp, {
+    category: 'engineeringDerived',
+    unit: '°C',
+    decimals: 1,
+    validate: isValidTemp,
+    sensorOk: telemetry?.sensorOk?.dht,
+    isOffline: isVestOffline,
+    ageMs: telemetry?.sensorAgeMs?.dht,
+    staleAfterMs: STALE_THRESHOLDS_MS.dht,
+    labels: derivedLabels,
+  });
+
+  const humidityMetric = normalizeMetric(telemetry?.humidity, {
+    category: 'engineeringDerived',
+    unit: '%',
+    decimals: 0,
+    validate: isValidHumidity,
+    sensorOk: telemetry?.sensorOk?.dht,
+    isOffline: isVestOffline,
+    ageMs: telemetry?.sensorAgeMs?.dht,
+    staleAfterMs: STALE_THRESHOLDS_MS.dht,
+    labels: derivedLabels,
+  });
+
+  const batteryVoltageMetric = normalizeMetric(telemetry?.batteryVoltage, {
+    category: 'engineeringDerived',
+    unit: 'V',
+    decimals: 2,
+    validate: isValidPositive,
+    sensorOk: telemetry?.sensorOk?.ina260,
+    isOffline: isVestOffline,
+    ageMs: telemetry?.sensorAgeMs?.ina260,
+    staleAfterMs: STALE_THRESHOLDS_MS.ina260,
+    labels: derivedLabels,
+  });
+
+  const batteryCurrentMetric = normalizeMetric(telemetry?.batteryCurrentMa, {
+    category: 'engineeringDerived',
+    unit: 'mA',
+    decimals: 0,
+    validate: isValidPositive,
+    sensorOk: telemetry?.sensorOk?.ina260,
+    isOffline: isVestOffline,
+    ageMs: telemetry?.sensorAgeMs?.ina260,
+    staleAfterMs: STALE_THRESHOLDS_MS.ina260,
+    labels: derivedLabels,
+  });
+
+  const batteryPowerMetric = normalizeMetric(telemetry?.batteryPowerMw, {
+    category: 'engineeringDerived',
+    unit: 'mW',
+    decimals: 0,
+    validate: isValidPositive,
+    sensorOk: telemetry?.sensorOk?.ina260,
+    isOffline: isVestOffline,
+    ageMs: telemetry?.sensorAgeMs?.ina260,
+    staleAfterMs: STALE_THRESHOLDS_MS.ina260,
+    labels: derivedLabels,
+  });
+
+  const inletMetric = normalizeMetric(telemetry?.inletTemp, {
+    category: 'engineeringDerived',
+    unit: '°C',
+    decimals: 1,
+    validate: isValidTemp,
+    sensorOk: telemetry?.sensorOk?.inlet,
+    isOffline: isVestOffline,
+    ageMs: telemetry?.sensorAgeMs?.temp,
+    staleAfterMs: STALE_THRESHOLDS_MS.temp,
+    labels: derivedLabels,
+  });
+
+  const outletMetric = normalizeMetric(telemetry?.outletTemp, {
+    category: 'engineeringDerived',
+    unit: '°C',
+    decimals: 1,
+    validate: isValidTemp,
+    sensorOk: telemetry?.sensorOk?.outlet,
+    isOffline: isVestOffline,
+    ageMs: telemetry?.sensorAgeMs?.temp,
+    staleAfterMs: STALE_THRESHOLDS_MS.temp,
+    labels: derivedLabels,
+  });
+
+  const pcmMetric = normalizeMetric(telemetry?.pcmTemp, {
+    category: 'engineeringDerived',
+    unit: '°C',
+    decimals: 1,
+    validate: isValidTemp,
+    sensorOk: telemetry?.sensorOk?.pcm,
+    isOffline: isVestOffline,
+    ageMs: telemetry?.sensorAgeMs?.temp,
+    staleAfterMs: STALE_THRESHOLDS_MS.temp,
+    labels: derivedLabels,
+  });
+
+  const gpsMetric = normalizeMetric(telemetry?.gps, {
+    category: 'slowLastKnown',
+    validate: isValidGps,
+    sensorOk: telemetry?.sensorOk?.gnss,
+    lastValidValue: lastValid.gps,
+    isOffline: isVestOffline,
+    ageMs: telemetry?.sensorAgeMs?.gnss,
+    staleAfterMs: STALE_THRESHOLDS_MS.gnss,
+    labels: {
+      live: 'Live GPS',
+      stale: 'GPS stale',
+      missing: 'No GPS data',
+      invalid: 'No GPS fix',
+      lastKnown: 'Last known location',
+    },
+  });
+
+  const displayedGps = gpsMetric.displayValue;
+  const gpsStatus = (() => {
+    if (isVestOffline) {
+      return displayedGps
+        ? { label: 'Last known location', tone: 'info' as const }
+        : { label: 'Unavailable', tone: 'muted' as const };
+    }
+    if (telemetry?.sensorOk?.gnss === false) {
+      return { label: 'Sensor failed', tone: 'danger' as const };
+    }
+    if (telemetry?.gps && telemetry.gps.fix === false) {
+      return { label: 'No GPS fix', tone: 'warn' as const };
+    }
+    if (gpsMetric.isStale) {
+      return { label: 'GPS stale', tone: 'warn' as const };
+    }
+    if (gpsMetric.source === 'lastValid') {
+      return { label: 'Last known location', tone: 'info' as const };
+    }
+    if (gpsMetric.isValid) {
+      return { label: 'Live GPS', tone: 'ok' as const };
+    }
+    return { label: 'No GPS data', tone: 'muted' as const };
+  })();
+
+  const gpsStatusMessage = (() => {
+    if (gpsStatus.label === 'Live GPS') {
+      return undefined;
+    }
+    if (gpsStatus.label === 'Last known location') {
+      return 'Showing last known location.';
+    }
+    if (gpsStatus.label === 'GPS stale') {
+      return 'GPS data is stale.';
+    }
+    if (gpsStatus.label === 'No GPS fix') {
+      return 'No GPS fix available.';
+    }
+    return 'No GPS data available.';
+  })();
+
+  const inletValue = typeof inletMetric.displayValue === 'number' ? inletMetric.displayValue : undefined;
+  const outletValue = typeof outletMetric.displayValue === 'number' ? outletMetric.displayValue : undefined;
+  const loopDeltaValue =
+    inletValue !== undefined && outletValue !== undefined
+      ? outletValue - inletValue
+      : undefined;
+  const loopDeltaText =
+    loopDeltaValue !== undefined
+      ? `${loopDeltaValue >= 0 ? '+' : ''}${loopDeltaValue.toFixed(1)} °C`
+      : '—';
+
+  const loopDeltaStatus = (() => {
+    if (isVestOffline || loopDeltaValue === undefined) {
+      return { label: 'Unavailable', tone: 'muted' as const };
+    }
+    if (loopDeltaValue >= LOOP_DELTA_ACTIVE_C) {
+      return { label: 'Heat pickup', tone: 'ok' as const };
+    }
+    if (loopDeltaValue <= -LOOP_DELTA_LOW_C) {
+      return { label: 'Reverse delta', tone: 'warn' as const };
+    }
+    if (Math.abs(loopDeltaValue) >= LOOP_DELTA_LOW_C) {
+      return { label: 'Low effect', tone: 'warn' as const };
+    }
+    return { label: 'Low effect', tone: 'muted' as const };
+  })();
+
+  const coolingStatus = (() => {
+    if (isVestOffline) {
+      return {
+        value: 'Unavailable',
+        statusLabel: 'Unavailable',
+        statusTone: 'muted' as const,
+        helper: 'Loop delta unavailable.',
+      };
+    }
+    if (loopDeltaValue === undefined) {
+      return {
+        value: 'Unavailable',
+        statusLabel: 'Unavailable',
+        statusTone: 'muted' as const,
+        helper: 'Loop delta unavailable.',
+      };
+    }
+    if (loopDeltaValue >= LOOP_DELTA_ACTIVE_C) {
+      return {
+        value: 'Cooling loop absorbing heat',
+        statusLabel: 'Live',
+        statusTone: 'ok' as const,
+        helper: `Loop delta ${loopDeltaText}`,
+      };
+    }
+    if (loopDeltaValue <= -LOOP_DELTA_LOW_C) {
+      return {
+        value: 'Reverse delta detected',
+        statusLabel: 'Live',
+        statusTone: 'warn' as const,
+        helper: `Loop delta ${loopDeltaText}`,
+      };
+    }
+    if (loopDeltaValue >= LOOP_DELTA_LOW_C) {
+      return {
+        value: 'Low loop effect',
+        statusLabel: 'Live',
+        statusTone: 'warn' as const,
+        helper: `Loop delta ${loopDeltaText}`,
+      };
+    }
+    return {
+      value: 'Low loop effect',
+      statusLabel: 'Live',
+      statusTone: 'muted' as const,
+      helper: `Loop delta ${loopDeltaText}`,
+    };
+  })();
+
+  const flowStatus = (() => {
+    const flowAgeMs = telemetry?.sensorAgeMs?.flow;
+    const flowValue = telemetry?.flowRateLMin;
+    const flowHasValue = isValidNumber(flowValue);
+    const flowIsStale = typeof flowAgeMs === 'number' && flowAgeMs > STALE_THRESHOLDS_MS.flow;
+
+    if (isVestOffline) {
+      return { value: 'Unavailable', statusLabel: 'Unavailable', statusTone: 'muted' as const };
+    }
+    if (telemetry?.sensorOk?.flow === false) {
+      return { value: 'Sensor failed', statusLabel: 'Sensor failed', statusTone: 'danger' as const };
+    }
+    if (flowIsStale) {
+      return { value: 'Stale', statusLabel: 'Stale', statusTone: 'warn' as const };
+    }
+    if (!flowHasValue) {
+      return { value: 'Unavailable', statusLabel: 'Unavailable', statusTone: 'muted' as const };
+    }
+    if (flowValue === 0) {
+      return { value: 'No flow detected', statusLabel: 'No flow', statusTone: 'warn' as const };
+    }
+    if (flowValue < FLOW_OK_MIN_L_MIN) {
+      return { value: 'Low flow', statusLabel: 'Low flow', statusTone: 'warn' as const };
+    }
+    return { value: 'Flow OK', statusLabel: 'Flow OK', statusTone: 'ok' as const };
+  })();
+
+  const pcmStatus = (() => {
+    const pcmValue = typeof pcmMetric.displayValue === 'number' ? pcmMetric.displayValue : undefined;
+    if (isVestOffline) {
+      return { value: 'Unavailable', statusLabel: 'Unavailable', statusTone: 'muted' as const };
+    }
+    if (!pcmMetric.isValid || pcmValue === undefined) {
+      return { value: 'Unavailable', statusLabel: pcmMetric.statusLabel, statusTone: pcmMetric.statusTone };
+    }
+    if (pcmValue <= PCM_TEMP_THRESHOLDS_C.coldMax) {
+      return { value: 'Cold / ready', statusLabel: 'Cold', statusTone: 'ok' as const };
+    }
+    if (pcmValue <= PCM_TEMP_THRESHOLDS_C.warmMax) {
+      return { value: 'Warming', statusLabel: 'Warming', statusTone: 'warn' as const };
+    }
+    return { value: 'Warm', statusLabel: 'Warm', statusTone: 'warn' as const };
+  })();
+
+  const criticalHelper = (metric: NormalizedMetric<unknown>) => {
+    if (isVestOffline && lastSeenAgeMs !== undefined) {
+      return `Last update ${formatAge(lastSeenAgeMs)}`;
+    }
+    if (metric.isStale && metric.ageMs !== undefined) {
+      return `Sensor age ${formatAge(metric.ageMs)}`;
+    }
+    return undefined;
+  };
+
+  const tempOkValues = [
+    telemetry?.sensorOk?.inlet,
+    telemetry?.sensorOk?.outlet,
+    telemetry?.sensorOk?.body,
+    telemetry?.sensorOk?.pcm,
+  ];
+  const tempOk = tempOkValues.every((value) => value === true)
+    ? true
+    : tempOkValues.some((value) => value === false)
+      ? false
+      : undefined;
 
   const sensorHealth = [
+    {
+      key: 'ppg',
+      label: 'PPG',
+      ok: telemetry?.sensorOk?.ppg,
+      ageMs: telemetry?.sensorAgeMs?.ppg,
+      staleAfterMs: STALE_THRESHOLDS_MS.ppg,
+    },
+    {
+      key: 'gnss',
+      label: 'GNSS',
+      ok: telemetry?.sensorOk?.gnss,
+      ageMs: telemetry?.sensorAgeMs?.gnss,
+      staleAfterMs: STALE_THRESHOLDS_MS.gnss,
+    },
+    {
+      key: 'temp',
+      label: 'Temp',
+      ok: tempOk,
+      ageMs: telemetry?.sensorAgeMs?.temp,
+      staleAfterMs: STALE_THRESHOLDS_MS.temp,
+    },
+    {
+      key: 'dht',
+      label: 'DHT',
+      ok: telemetry?.sensorOk?.dht,
+      ageMs: telemetry?.sensorAgeMs?.dht,
+      staleAfterMs: STALE_THRESHOLDS_MS.dht,
+    },
+    {
+      key: 'ina260',
+      label: 'INA260',
+      ok: telemetry?.sensorOk?.ina260,
+      ageMs: telemetry?.sensorAgeMs?.ina260,
+      staleAfterMs: STALE_THRESHOLDS_MS.ina260,
+    },
+    {
+      key: 'flow',
+      label: 'Flow',
+      ok: telemetry?.sensorOk?.flow,
+      ageMs: telemetry?.sensorAgeMs?.flow,
+      staleAfterMs: STALE_THRESHOLDS_MS.flow,
+    },
     {
       key: 'inlet',
       label: 'Inlet',
@@ -546,41 +794,6 @@ export default function GuardPage() {
       ageMs: telemetry?.sensorAgeMs?.temp,
       staleAfterMs: STALE_THRESHOLDS_MS.temp,
     },
-    {
-      key: 'ppg',
-      label: 'PPG',
-      ok: telemetry?.sensorOk?.ppg,
-      ageMs: telemetry?.sensorAgeMs?.ppg,
-      staleAfterMs: STALE_THRESHOLDS_MS.ppg,
-    },
-    {
-      key: 'gnss',
-      label: 'GNSS',
-      ok: telemetry?.sensorOk?.gnss,
-      ageMs: telemetry?.sensorAgeMs?.gnss,
-      staleAfterMs: STALE_THRESHOLDS_MS.gnss,
-    },
-    {
-      key: 'dht',
-      label: 'DHT',
-      ok: telemetry?.sensorOk?.dht,
-      ageMs: telemetry?.sensorAgeMs?.dht,
-      staleAfterMs: STALE_THRESHOLDS_MS.dht,
-    },
-    {
-      key: 'ina260',
-      label: 'INA260',
-      ok: telemetry?.sensorOk?.ina260,
-      ageMs: telemetry?.sensorAgeMs?.ina260,
-      staleAfterMs: STALE_THRESHOLDS_MS.ina260,
-    },
-    {
-      key: 'flow',
-      label: 'Flow',
-      ok: telemetry?.sensorOk?.flow,
-      ageMs: telemetry?.sensorAgeMs?.flow,
-      staleAfterMs: STALE_THRESHOLDS_MS.flow,
-    },
   ];
 
   const resolveSensorStatus = (item: (typeof sensorHealth)[number]) => {
@@ -596,251 +809,244 @@ export default function GuardPage() {
     return { label: 'Unknown', tone: 'muted' as const };
   };
   
+  const onlineStatus = isVestOffline
+    ? { label: 'Offline', tone: 'danger' as const }
+    : { label: 'Online', tone: 'ok' as const };
+  const modeStatus = !telemetry?.mode
+    ? { label: 'Unavailable', tone: 'muted' as const }
+    : isVestOffline
+      ? { label: 'Last received', tone: 'info' as const }
+      : { label: 'Live', tone: 'ok' as const };
+  const pumpStatus = { label: pumpMetric.statusLabel, tone: pumpMetric.statusTone };
+  const batteryStatus = { label: batteryMetric.statusLabel, tone: batteryMetric.statusTone };
+
   return (
     <DashboardLayout>
-      <div className="grid gap-4 lg:grid-cols-12">
-        <div className="lg:col-span-4">
-          <VestPairing
-            activeVestId={pairedVestId}
-            onPair={handlePairVest}
-            pairing={pairing}
-            loading={pairedVestIdLoading}
-          />
-        </div>
-
-        <Card className="lg:col-span-8">
-          <CardHeader className="gap-2">
-            <CardTitle className="flex items-center justify-between text-base">
-              <span>Vest Status</span>
-              {telemetryLoading && hasPairing ? (
-                <Skeleton className="h-5 w-20" />
-              ) : (
-                <Badge
-                  variant="outline"
-                  className={cn(
-                    'text-xs',
-                    isVestOffline
-                      ? 'border-rose-500/40 bg-rose-500/10 text-rose-700'
-                      : 'border-emerald-500/40 bg-emerald-500/10 text-emerald-700'
-                  )}
-                >
-                  {isVestOffline ? 'Offline' : 'Live'}
-                </Badge>
-              )}
-            </CardTitle>
-            <CardDescription>
-              {hasPairing ? (
-                <span>
-                  Paired vest <span className="font-semibold text-foreground">{pairedVestId}</span>
-                </span>
-              ) : (
-                'No vest paired yet.'
-              )}
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="grid gap-3 md:grid-cols-2">
-              <div className="flex items-center justify-between rounded-md border border-border/60 bg-background/70 px-3 py-2">
-                <div className="flex items-center gap-2 text-sm font-medium">
-                  <Activity className="h-4 w-4 text-muted-foreground" />
-                  Mode
-                </div>
-                <Badge variant="outline" className="text-xs">
-                  {telemetry?.mode ?? '—'}
-                </Badge>
-              </div>
-              <div className="flex items-center justify-between rounded-md border border-border/60 bg-background/70 px-3 py-2">
-                <div className="flex items-center gap-2 text-sm font-medium">
-                  <Gauge className="h-4 w-4 text-muted-foreground" />
-                  Pump
-                </div>
-                <span className="text-sm font-semibold">{metrics.pumpPct.formattedValue}</span>
-              </div>
-              <div className="flex items-center justify-between rounded-md border border-border/60 bg-background/70 px-3 py-2">
-                <div className="flex items-center gap-2 text-sm font-medium">
-                  <Timer className="h-4 w-4 text-muted-foreground" />
-                  Last update
-                </div>
-                <span className="text-sm font-semibold">{formatAge(lastSeenAgeMs)}</span>
-              </div>
-              <div className="flex items-center justify-between rounded-md border border-border/60 bg-background/70 px-3 py-2">
-                <div className="flex items-center gap-2 text-sm font-medium">
-                  <Timer className="h-4 w-4 text-muted-foreground" />
-                  Uptime
-                </div>
-                <span className="text-sm font-semibold">{formatDuration(telemetry?.uptimeMs)}</span>
-              </div>
+      <div className="mx-auto flex w-full max-w-6xl flex-col gap-4">
+        <Card>
+          <CardContent className="p-3">
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+              <TopStat label="Vest" value={pairedVestId ?? 'Not paired'} status={onlineStatus} />
+              <TopStat label="Mode" value={telemetry?.mode ?? '—'} status={modeStatus} />
+              <TopStat label="Pump" value={pumpMetric.formattedValue} status={pumpStatus} />
+              <TopStat label="Battery" value={batteryMetric.formattedValue} status={batteryStatus} />
+              <TopStat label="Last update" value={formatAge(lastSeenAgeMs)} />
             </div>
-            {!hasTelemetry && hasPairing && !telemetryLoading && (
-              <p className="mt-3 text-xs text-muted-foreground">
+            {telemetryLoading && hasPairing && (
+              <p className="mt-2 text-[11px] text-muted-foreground">
+                Loading latest telemetry…
+              </p>
+            )}
+            {!telemetry && hasPairing && !telemetryLoading && (
+              <p className="mt-2 text-[11px] text-muted-foreground">
                 Waiting for telemetry from {pairedVestId}.
               </p>
             )}
           </CardContent>
         </Card>
 
-        <Card className="lg:col-span-4">
-          <CardHeader className="flex flex-row items-center justify-between">
-            <div>
-              <CardTitle className="text-base">Human / Vitals</CardTitle>
-              <CardDescription>Wearer status readings.</CardDescription>
-            </div>
-            <Thermometer className="h-5 w-5 text-muted-foreground" />
-          </CardHeader>
-          <CardContent className="grid gap-3">
-            <MetricRow label="Skin temp" metric={metrics.skinTemp} />
-            <MetricRow label="Body temp" metric={metrics.bodyTemp} />
-            <MetricRow label="Heart rate" metric={metrics.heartRateBpm} />
-            <MetricRow label="SpO2" metric={metrics.spo2Pct} />
-            <MetricRow label="PPG temp" metric={metrics.ppgTemp} />
-          </CardContent>
-        </Card>
+        <div className="grid gap-4 lg:grid-cols-12">
+          <Card className="lg:col-span-8">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base">Safety / Live Vitals</CardTitle>
+              <CardDescription>Live-only safety readings.</CardDescription>
+            </CardHeader>
+            <CardContent className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+              <LiveMetricCard
+                title="Skin temp"
+                metric={skinMetric}
+                icon={<Thermometer className="h-4 w-4" />}
+                helper={criticalHelper(skinMetric)}
+              />
+              <LiveMetricCard
+                title="Body temp"
+                metric={bodyMetric}
+                icon={<Thermometer className="h-4 w-4" />}
+                helper={criticalHelper(bodyMetric)}
+              />
+              <LiveMetricCard
+                title="Heart rate"
+                metric={heartMetric}
+                icon={<HeartPulse className="h-4 w-4" />}
+                helper={criticalHelper(heartMetric)}
+              />
+              <LiveMetricCard
+                title="SpO2"
+                metric={spo2Metric}
+                icon={<Droplets className="h-4 w-4" />}
+                helper={criticalHelper(spo2Metric)}
+              />
+            </CardContent>
+          </Card>
 
-        <Card className="lg:col-span-4">
-          <CardHeader className="flex flex-row items-center justify-between">
-            <div>
-              <CardTitle className="text-base">Cooling System</CardTitle>
-              <CardDescription>Coolant loop performance.</CardDescription>
-            </div>
-            <Wind className="h-5 w-5 text-muted-foreground" />
-          </CardHeader>
-          <CardContent className="grid gap-3">
-            <MetricRow label="Inlet temp" metric={metrics.inletTemp} />
-            <MetricRow label="Outlet temp" metric={metrics.outletTemp} />
-            <MetricRow label="PCM temp" metric={metrics.pcmTemp} />
-            <MetricRow label="Flow rate" metric={metrics.flowRateLMin} />
-            <MetricRow label="Flow total" metric={metrics.flowTotalL} />
-            <MetricRow label="Pump output" metric={metrics.pumpPct} />
-          </CardContent>
-        </Card>
+          <div className="lg:col-span-4 grid gap-4">
+            <VestPairing
+              activeVestId={pairedVestId}
+              onPair={handlePairVest}
+              pairing={pairing}
+              loading={pairedVestIdLoading}
+            />
+            <ModeControl vestId={pairedVestId} currentMode={telemetry?.mode} isOffline={isVestOffline} />
+          </div>
 
-        <Card className="lg:col-span-4">
-          <CardHeader className="flex flex-row items-center justify-between">
-            <div>
-              <CardTitle className="text-base">Battery & Power</CardTitle>
-              <CardDescription>Power system metrics.</CardDescription>
-            </div>
-            <Battery className="h-5 w-5 text-muted-foreground" />
-          </CardHeader>
-          <CardContent className="grid gap-3">
-            <MetricRow label="Battery" metric={metrics.batteryPct} />
-            <MetricRow label="Voltage" metric={metrics.batteryVoltage} />
-            <MetricRow label="Current" metric={metrics.batteryCurrentMa} />
-            <MetricRow label="Power" metric={metrics.batteryPowerMw} />
-          </CardContent>
-        </Card>
-
-        <Card className="lg:col-span-4">
-          <CardHeader className="flex flex-row items-center justify-between">
-            <div>
-              <CardTitle className="text-base">Environment</CardTitle>
-              <CardDescription>Ambient conditions.</CardDescription>
-            </div>
-            <Droplets className="h-5 w-5 text-muted-foreground" />
-          </CardHeader>
-          <CardContent className="grid gap-3">
-            <MetricRow label="Ambient temp" metric={metrics.ambientTemp} />
-            <MetricRow label="Humidity" metric={metrics.humidity} />
-          </CardContent>
-        </Card>
-
-        <Card className="lg:col-span-4">
-          <CardHeader className="flex flex-row items-center justify-between">
-            <div>
-              <CardTitle className="text-base">Sensor Health</CardTitle>
-              <CardDescription>Quick sensor checks.</CardDescription>
-            </div>
-            <Zap className="h-5 w-5 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="grid grid-cols-2 gap-2">
-              {sensorHealth.map((sensor) => {
-                const status = resolveSensorStatus(sensor);
-                return (
-                  <div
-                    key={sensor.key}
-                    className="flex items-center justify-between rounded-md border border-border/60 bg-background/70 px-3 py-2"
-                  >
-                    <span className="text-xs font-medium text-muted-foreground">{sensor.label}</span>
-                    <Badge
-                      variant="outline"
-                      className={cn('text-[10px] uppercase tracking-wide', statusToneClasses[status.tone])}
-                    >
-                      {status.label}
-                    </Badge>
-                  </div>
-                );
-              })}
-            </div>
-          </CardContent>
-        </Card>
-
-        <div className="lg:col-span-4">
-          <ModeControl vestId={pairedVestId} currentMode={telemetry?.mode} isOffline={isVestOffline} />
-        </div>
-
-        <Card className="lg:col-span-12">
-          <CardHeader className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
-            <div>
-              <CardTitle className="text-base">Location</CardTitle>
-              <CardDescription>
-                {gpsStatusMessage ?? 'Live GNSS location and accuracy.'}
-              </CardDescription>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <Badge
-                variant="outline"
-                className={cn(
-                  'text-xs',
-                  displayedGps?.fix === true
-                    ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-700'
-                    : 'border-amber-500/40 bg-amber-500/10 text-amber-700'
-                )}
-              >
-                {displayedGps?.fix === true ? 'GPS Fix' : 'No Fix'}
-              </Badge>
-              <Badge
-                variant="outline"
-                className={cn('text-xs', statusToneClasses[metrics.gps.statusTone])}
-              >
-                {metrics.gps.statusLabel}
-              </Badge>
-            </div>
-          </CardHeader>
-          <CardContent>
-            <div className="grid gap-4 lg:grid-cols-[2fr,1fr]">
-              <VestMap gps={displayedGps} statusMessage={gpsStatusMessage} variant="plain" />
-              <div className="grid gap-3">
-                <div className="rounded-md border border-border/60 bg-background/70 px-3 py-2">
-                  <p className="text-xs text-muted-foreground">Latitude / Longitude</p>
-                  <p className="text-sm font-semibold">
-                    {displayedGps && isValidNumber(displayedGps.lat) && isValidNumber(displayedGps.lng)
-                      ? `${displayedGps.lat.toFixed(5)}, ${displayedGps.lng.toFixed(5)}`
-                      : '—'}
-                  </p>
+          <Card className="lg:col-span-8">
+            <CardHeader className="pb-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle className="text-base">Cooling impact</CardTitle>
+                  <CardDescription>Derived status from loop sensors.</CardDescription>
                 </div>
-                <div className="rounded-md border border-border/60 bg-background/70 px-3 py-2">
-                  <p className="text-xs text-muted-foreground">Accuracy</p>
-                  <p className="text-sm font-semibold">
-                    {displayedGps?.accuracyM ? `±${displayedGps.accuracyM.toFixed(0)} m` : '—'}
-                  </p>
+                <Wind className="h-4 w-4 text-muted-foreground" />
+              </div>
+            </CardHeader>
+            <CardContent className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+              <DerivedStatusCard
+                title="Cooling status"
+                value={coolingStatus.value}
+                statusLabel={coolingStatus.statusLabel}
+                statusTone={coolingStatus.statusTone}
+                helper={coolingStatus.helper}
+              />
+              <DerivedStatusCard
+                title="Loop delta"
+                value={loopDeltaText}
+                statusLabel={loopDeltaStatus.label}
+                statusTone={loopDeltaStatus.tone}
+                helper="Heat pickup indicator"
+              />
+              <DerivedStatusCard
+                title="Flow status"
+                value={flowStatus.value}
+                statusLabel={flowStatus.statusLabel}
+                statusTone={flowStatus.statusTone}
+              />
+              <DerivedStatusCard
+                title="PCM status"
+                value={pcmStatus.value}
+                statusLabel={pcmStatus.statusLabel}
+                statusTone={pcmStatus.statusTone}
+              />
+              <DerivedStatusCard
+                title="Pump output"
+                value={pumpMetric.formattedValue}
+                statusLabel={pumpMetric.statusLabel}
+                statusTone={pumpMetric.statusTone}
+              />
+            </CardContent>
+          </Card>
+
+          <Card className="lg:col-span-4">
+            <CardHeader className="pb-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle className="text-base">Battery & Environment</CardTitle>
+                  <CardDescription>Power and ambient conditions.</CardDescription>
                 </div>
-                <div className="rounded-md border border-border/60 bg-background/70 px-3 py-2">
-                  <p className="text-xs text-muted-foreground">GPS age</p>
-                  <p className="text-sm font-semibold">
-                    {formatAge(telemetry?.sensorAgeMs?.gnss)}
-                  </p>
+                <Battery className="h-4 w-4 text-muted-foreground" />
+              </div>
+            </CardHeader>
+            <CardContent className="grid gap-3">
+              <div className="grid gap-3 sm:grid-cols-2">
+                <CompactMetricCard title="Battery" metric={batteryMetric} />
+                <CompactMetricCard title="Ambient temp" metric={ambientMetric} />
+                <CompactMetricCard title="Humidity" metric={humidityMetric} />
+              </div>
+              <div className="grid gap-2 sm:grid-cols-3">
+                <div className="flex items-center justify-between rounded-md border border-border/60 bg-background/70 px-3 py-2">
+                  <p className="text-[11px] text-muted-foreground">Voltage</p>
+                  <p className="text-xs font-semibold">{batteryVoltageMetric.formattedValue}</p>
                 </div>
-                <div className="rounded-md border border-border/60 bg-background/70 px-3 py-2">
-                  <p className="text-xs text-muted-foreground">Last GPS update</p>
-                  <p className="text-sm font-semibold">
-                    {telemetry?.gps?.gpsTs ? formatAge(now - telemetry.gps.gpsTs) : '—'}
-                  </p>
+                <div className="flex items-center justify-between rounded-md border border-border/60 bg-background/70 px-3 py-2">
+                  <p className="text-[11px] text-muted-foreground">Current</p>
+                  <p className="text-xs font-semibold">{batteryCurrentMetric.formattedValue}</p>
+                </div>
+                <div className="flex items-center justify-between rounded-md border border-border/60 bg-background/70 px-3 py-2">
+                  <p className="text-[11px] text-muted-foreground">Power</p>
+                  <p className="text-xs font-semibold">{batteryPowerMetric.formattedValue}</p>
                 </div>
               </div>
-            </div>
-          </CardContent>
-        </Card>
+            </CardContent>
+          </Card>
+
+          <Card className="lg:col-span-12">
+            <CardHeader className="flex flex-col gap-2 pb-3 md:flex-row md:items-start md:justify-between">
+              <div>
+                <CardTitle className="text-base">Location</CardTitle>
+                <CardDescription>
+                  {gpsStatusMessage ?? 'Live GNSS location and accuracy.'}
+                </CardDescription>
+              </div>
+              <StatusPill label={gpsStatus.label} tone={gpsStatus.tone} />
+            </CardHeader>
+            <CardContent>
+              <div className="grid gap-4 lg:grid-cols-[2fr,1fr]">
+                <VestMap
+                  gps={displayedGps}
+                  statusMessage={gpsStatusMessage}
+                  variant="plain"
+                  size="compact"
+                />
+                <div className="grid gap-2">
+                  <div className="rounded-md border border-border/60 bg-background/70 px-3 py-2">
+                    <p className="text-xs text-muted-foreground">Latitude / Longitude</p>
+                    <p className="text-sm font-semibold">
+                      {displayedGps && isValidNumber(displayedGps.lat) && isValidNumber(displayedGps.lng)
+                        ? `${displayedGps.lat.toFixed(5)}, ${displayedGps.lng.toFixed(5)}`
+                        : '—'}
+                    </p>
+                  </div>
+                  <div className="rounded-md border border-border/60 bg-background/70 px-3 py-2">
+                    <p className="text-xs text-muted-foreground">Accuracy</p>
+                    <p className="text-sm font-semibold">
+                      {displayedGps?.accuracyM ? `±${displayedGps.accuracyM.toFixed(0)} m` : '—'}
+                    </p>
+                  </div>
+                  <div className="rounded-md border border-border/60 bg-background/70 px-3 py-2">
+                    <p className="text-xs text-muted-foreground">GPS age</p>
+                    <p className="text-sm font-semibold">
+                      {formatAge(telemetry?.sensorAgeMs?.gnss)}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className="lg:col-span-12">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base">Diagnostics</CardTitle>
+              <CardDescription>Sensor health snapshot (optional).</CardDescription>
+            </CardHeader>
+            <CardContent className="pt-0">
+              <details className="group">
+                <summary className="cursor-pointer text-xs text-muted-foreground">
+                  View sensor health
+                </summary>
+                <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+                  {sensorHealth.map((sensor) => {
+                    const status = resolveSensorStatus(sensor);
+                    return (
+                      <div
+                        key={sensor.key}
+                        className="flex items-center justify-between rounded-md border border-border/60 bg-background/70 px-3 py-2"
+                      >
+                        <span className="text-[11px] font-medium text-muted-foreground">
+                          {sensor.label}
+                        </span>
+                        <Badge
+                          variant="outline"
+                          className={cn('text-[10px] uppercase tracking-wide', statusToneClasses[status.tone])}
+                        >
+                          {status.label}
+                        </Badge>
+                      </div>
+                    );
+                  })}
+                </div>
+              </details>
+            </CardContent>
+          </Card>
+        </div>
       </div>
     </DashboardLayout>
   );

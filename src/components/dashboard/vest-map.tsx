@@ -4,17 +4,19 @@ import { lazy, Suspense } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../ui/card';
 import type { GpsData } from '@/lib/types';
 import { Skeleton } from '../ui/skeleton';
+import { cn } from '@/lib/utils';
 
 interface VestMapProps {
   gps?: GpsData;
   statusMessage?: string;
   variant?: 'card' | 'plain';
+  size?: 'default' | 'compact';
 }
 
 // Lazy load MapContent to prevent SSR issues with Leaflet
 const MapContent = lazy(() => import('./map-content'));
 
-export default function VestMap({ gps, statusMessage, variant = 'card' }: VestMapProps) {
+export default function VestMap({ gps, statusMessage, variant = 'card', size = 'default' }: VestMapProps) {
   const hasValidFix =
     !!gps &&
     gps.fix === true &&
@@ -23,10 +25,12 @@ export default function VestMap({ gps, statusMessage, variant = 'card' }: VestMa
     gps.lat !== 0 &&
     gps.lng !== 0;
 
+  const mapSizeClassName = size === 'compact' ? 'aspect-[16/9] max-h-64' : 'aspect-[4/3]';
+
   const mapBody = (
-    <div className="relative aspect-[4/3] w-full overflow-hidden rounded-md bg-muted">
+    <div className={cn("relative w-full overflow-hidden rounded-md bg-muted", mapSizeClassName)}>
       {hasValidFix && gps ? (
-        <Suspense fallback={<Skeleton className="h-96 w-full" />}>
+        <Suspense fallback={<Skeleton className="h-full w-full" />}>
           <MapContent lat={gps.lat} lng={gps.lng} accuracyM={gps.accuracyM} />
         </Suspense>
       ) : (

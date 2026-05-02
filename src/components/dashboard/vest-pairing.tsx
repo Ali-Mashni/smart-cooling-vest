@@ -81,34 +81,36 @@ export function VestPairing({ activeVestId, onPair, pairing, loading }: VestPair
 
   return (
     <Card>
-      <CardHeader>
-        <CardTitle>Vest Pairing</CardTitle>
-        <CardDescription>
+      <CardHeader className="pb-3">
+        <CardTitle className="text-base">Vest Pairing</CardTitle>
+        <CardDescription className="text-xs">
           Enter a Vest ID to pair with your device.
         </CardDescription>
       </CardHeader>
-      <CardContent className="space-y-4">
+      <CardContent className="space-y-3">
         {loading ? (
           <Loader className="h-20" />
         ) : (
           <div>
-            <p className="text-sm font-medium">Currently Paired Vest:</p>
-            <p className="text-lg font-bold text-primary">
+            <p className="text-xs font-medium text-muted-foreground">Currently Paired Vest</p>
+            <p className="text-base font-semibold text-primary">
               {activeVestId || 'None'}
             </p>
           </div>
         )}
 
-        <div className="flex w-full max-w-sm items-center space-x-2">
+        <div className="flex w-full items-center gap-2">
           <Input
             value={newVestId}
             onChange={(e) => setNewVestId(e.target.value)}
             placeholder="Enter Vest ID (e.g., v001)"
             disabled={pairingState.validating || pairing}
+            className="h-9"
           />
           <Button 
             onClick={handlePairing} 
             disabled={isDisabled}
+            className="h-9"
           >
             {pairingState.validating || pairing ? 'Validating...' : 'Pair'}
           </Button>
