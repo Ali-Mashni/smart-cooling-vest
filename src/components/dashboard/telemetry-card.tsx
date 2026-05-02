@@ -14,6 +14,7 @@ interface TelemetryCardProps {
   percentageValue?: number;
   statusTs?: number; // Unix timestamp
   unit?: string; // Optional unit display (e.g., "bpm", "%")
+  helperText?: string;
 }
 
 function StatusIndicator({ lastSeenTs }: { lastSeenTs: number }) {
@@ -69,7 +70,8 @@ export default function TelemetryCard({
   isPercentage = false,
   percentageValue = 0,
   statusTs,
-  unit
+  unit,
+  helperText
 }: TelemetryCardProps) {
   return (
     <Card>
@@ -88,6 +90,7 @@ export default function TelemetryCard({
         {isPercentage && (
           <Progress value={percentageValue} aria-label={`${percentageValue}%`} className="mt-2 h-2" />
         )}
+        {helperText && <p className="mt-2 text-xs text-muted-foreground">{helperText}</p>}
       </CardContent>
     </Card>
   );

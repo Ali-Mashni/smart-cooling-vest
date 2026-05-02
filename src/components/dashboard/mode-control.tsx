@@ -86,10 +86,20 @@ export function ModeControl({ vestId, currentMode, isOffline }: ModeControlProps
             unsubscribe();
           }
           const latency = Date.now() - startTime;
-          toast({
+          const toastResult = toast({
             title: 'Mode Change Acknowledged',
             description: `Vest mode set to ${mode}. (Latency: ${latency}ms)`,
           });
+          
+          // Subtract time from popup display: 1.3s if latency > 5s, else 0.7s
+          const subtractMs = latency > 5000 ? 1300 : 700;
+          const defaultDuration = 4000; // Default toast display time
+          const displayDuration = Math.max(1000, defaultDuration - subtractMs);
+          
+          setTimeout(() => {
+            toastResult.dismiss();
+          }, displayDuration);
+          
           setPendingCommand(null);
         }
       });
@@ -136,7 +146,16 @@ export function ModeControl({ vestId, currentMode, isOffline }: ModeControlProps
               {mode}
             </Button>
           ))}
+          <Button
+            variant="outline"
+            className="w-full col-span-2 sm:col-span-4 opacity-70"
+            disabled
+            title="AI mode coming soon"
+          >
+            Auto (Coming soon)
+          </Button>
         </div>
+        <p className="text-xs text-muted-foreground">AI mode coming soon.</p>
       </CardContent>
     </Card>
   );

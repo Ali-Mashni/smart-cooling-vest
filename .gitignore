@@ -31,6 +31,10 @@ yarn-error.log*
 # simulator (python)
 /simulator/.env
 /simulator/.venv/
+/simulator/.venv/dsa.cpp
+/simulator/.venv/sdf.cpp
+/simulator/.venv/espcode.cpp
+
 
 # python cache
 __pycache__/

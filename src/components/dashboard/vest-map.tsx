@@ -7,13 +7,41 @@ import { Skeleton } from '../ui/skeleton';
 
 interface VestMapProps {
   gps?: GpsData;
+  statusMessage?: string;
+  variant?: 'card' | 'plain';
 }
 
 // Lazy load MapContent to prevent SSR issues with Leaflet
 const MapContent = lazy(() => import('./map-content'));
 
-export default function VestMap({ gps }: VestMapProps) {
-  const hasValidFix = gps && gps.fix !== false;
+export default function VestMap({ gps, statusMessage, variant = 'card' }: VestMapProps) {
+  const hasValidFix =
+    !!gps &&
+    gps.fix === true &&
+    typeof gps.lat === 'number' &&
+    typeof gps.lng === 'number' &&
+    gps.lat !== 0 &&
+    gps.lng !== 0;
+
+  const mapBody = (
+    <div className="relative aspect-[4/3] w-full overflow-hidden rounded-md bg-muted">
+      {hasValidFix && gps ? (
+        <Suspense fallback={<Skeleton className="h-96 w-full" />}>
+          <MapContent lat={gps.lat} lng={gps.lng} accuracyM={gps.accuracyM} />
+        </Suspense>
+      ) : (
+        <div className="flex h-full items-center justify-center">
+          <p className="text-center text-muted-foreground">
+            {statusMessage ?? (gps?.fix === false ? 'No GPS fix available' : 'No location available')}
+          </p>
+        </div>
+      )}
+    </div>
+  );
+
+  if (variant === 'plain') {
+    return mapBody;
+  }
 
   return (
     <Card>
@@ -21,26 +49,14 @@ export default function VestMap({ gps }: VestMapProps) {
         <CardTitle>GPS Location</CardTitle>
         <CardDescription>
           {gps
-            ? `Lat: ${gps.lat.toFixed(4)}, Lng: ${gps.lng.toFixed(4)}${
+            ? `${statusMessage ? `${statusMessage} ` : ''}Lat: ${gps.lat.toFixed(4)}, Lng: ${gps.lng.toFixed(4)}${
                 gps.accuracyM ? `, Accuracy: ±${gps.accuracyM}m` : ''
               }${gps.fix === false ? ' (No Fix)' : ''}`
-            : 'No GPS data available.'}
+            : statusMessage || 'No GPS data available.'}
         </CardDescription>
       </CardHeader>
       <CardContent>
-        <div className="relative aspect-[4/3] w-full overflow-hidden rounded-md bg-muted">
-          {hasValidFix && gps ? (
-            <Suspense fallback={<Skeleton className="h-96 w-full" />}>
-              <MapContent lat={gps.lat} lng={gps.lng} accuracyM={gps.accuracyM} />
-            </Suspense>
-          ) : (
-            <div className="flex h-full items-center justify-center">
-              <p className="text-center text-muted-foreground">
-                {gps?.fix === false ? 'No GPS fix available' : 'No location available'}
-              </p>
-            </div>
-          )}
-        </div>
+        {mapBody}
       </CardContent>
     </Card>
   );

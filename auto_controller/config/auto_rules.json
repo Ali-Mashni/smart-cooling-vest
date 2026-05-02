@@ -1,0 +1,82 @@
+{
+  "polling": {
+    "intervalSeconds": 6,
+    "historyLimit": 12,
+    "onlineThresholdMs": 60000
+  },
+  "defaults": {
+    "comfortBias": 0.6,
+    "batteryBias": 0.4,
+    "initialPumpSpeedPct": 45
+  },
+  "thresholds": {
+    "skinTempC": {
+      "elevated": 35.0,
+      "high": 36.5,
+      "danger": 37.5
+    },
+    "ambientTempC": {
+      "warm": 33.0,
+      "hot": 37.0
+    },
+    "heartRateBpm": {
+      "elevated": 95,
+      "high": 115
+    },
+    "batteryPct": {
+      "low": 30,
+      "critical": 15
+    },
+    "spo2Pct": {
+      "low": 94,
+      "critical": 91
+    }
+  },
+  "trend": {
+    "windowMinRecords": 3,
+    "tempRisePerMinHigh": 0.12,
+    "hrRisePerMinHigh": 2.0
+  },
+  "weights": {
+    "basePumpPct": 20,
+    "comfortScore": 70,
+    "batteryPenalty": 45,
+    "skinTemp": 0.32,
+    "ambientTemp": 0.18,
+    "heartRate": 0.2,
+    "tempTrend": 0.16,
+    "hrTrend": 0.1,
+    "spo2Safety": 0.04
+  },
+  "limits": {
+    "minPumpPct": 0,
+    "maxPumpPct": 100,
+    "maxPumpWhenBatteryCritical": 55,
+    "maxPumpWhenBatteryLow": 75
+  },
+  "hysteresis": {
+    "enabled": true,
+    "minChangePct": 4
+  },
+  "publishing": {
+    "minIntervalMs": 5000,
+    "minSpeedChangePct": 3
+  },
+  "speedToBackupMode": [
+    {
+      "min": 0,
+      "max": 39,
+      "mode": "ECO"
+    },
+    {
+      "min": 40,
+      "max": 64,
+      "mode": "NORMAL"
+    },
+    {
+      "min": 65,
+      "max": 100,
+      "mode": "BOOST"
+    }
+  ]
+}
