@@ -66,15 +66,15 @@ function SupervisorVestDetail({ vestId }: { vestId: string }) {
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         <TelemetryCard
           title="Skin Temp"
-          value={`${telemetry.skinTemp.toFixed(1)} °C`}
+          value={telemetry.skinTemp !== undefined ? `${telemetry.skinTemp.toFixed(1)} °C` : '—'}
           icon={<Thermometer />}
         />
         <TelemetryCard
           title="Battery"
-          value={`${telemetry.batteryPct}%`}
+          value={telemetry.batteryPct !== undefined ? `${telemetry.batteryPct}%` : '—'}
           icon={<Battery />}
           isPercentage
-          percentageValue={telemetry.batteryPct}
+          percentageValue={telemetry.batteryPct ?? 0}
         />
         <TelemetryCard
           title="Heart Rate"
@@ -87,7 +87,7 @@ function SupervisorVestDetail({ vestId }: { vestId: string }) {
           value={telemetry.spo2Pct !== undefined ? `${telemetry.spo2Pct}` : '—'}
           icon={<Droplets />}
           unit="%"
-          statusTs={telemetry.lastSeenTs}
+          statusTs={telemetry.lastSeenTs ?? undefined}
         />
       </div>
     );
