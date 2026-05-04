@@ -12,16 +12,14 @@ import {
 import { auth } from '@/lib/firebase';
 import { signOut } from 'firebase/auth';
 import { CircleUser, ShieldCheck } from 'lucide-react';
-import { useRouter } from 'next/navigation';
 import { useAuth } from '../auth/auth-provider';
 
 export function Header() {
   const { user } = useAuth();
-  const router = useRouter();
 
   const handleLogout = async () => {
     await signOut(auth);
-    router.push('/login');
+    window.location.assign('/login');
   };
 
   return (

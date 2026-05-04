@@ -18,7 +18,6 @@ import { useState } from 'react';
 import { signInWithEmailAndPassword } from 'firebase/auth';
 import { auth } from '@/lib/firebase';
 import { useToast } from '@/hooks/use-toast';
-import { useRouter } from 'next/navigation';
 import { ShieldCheck } from 'lucide-react';
 
 const loginSchema = z.object({
@@ -29,7 +28,6 @@ const loginSchema = z.object({
 export function LoginForm() {
   const [loading, setLoading] = useState(false);
   const { toast } = useToast();
-  const router = useRouter();
 
   const form = useForm<z.infer<typeof loginSchema>>({
     resolver: zodResolver(loginSchema),
@@ -43,7 +41,7 @@ export function LoginForm() {
     setLoading(true);
     try {
       await signInWithEmailAndPassword(auth, values.email, values.password);
-      router.push('/');
+      window.location.assign('/');
     } catch (error: any) {
       toast({
         variant: 'destructive',
