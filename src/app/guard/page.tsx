@@ -4,10 +4,17 @@ import { useAuth } from '@/components/auth/auth-provider';
 import { DashboardLayout } from '@/components/layout/dashboard-layout';
 import { Loader } from '@/components/layout/loader';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import {
+  Dialog,
+  DialogContent,
+  DialogTrigger,
+} from '@/components/ui/dialog';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
-import { VestPairing } from '@/components/dashboard/vest-pairing';
+import { VestPairingDialog } from '@/components/dashboard/vest-pairing-dialog';
+import { GuardTrends } from '@/components/dashboard/guard-trends';
 import { useRtdbValue } from '@/hooks/use-rtdb-value';
 import type { VestTelemetry, GpsData } from '@/lib/types';
 import {
@@ -15,7 +22,7 @@ import {
   type NormalizedMetric,
   type MetricStatusTone,
 } from '@/lib/telemetry-normalization';
-import { Battery, Thermometer, HeartPulse, Droplets, Wind } from 'lucide-react';
+import { Battery, Thermometer, HeartPulse, Droplets, Wind, Sliders } from 'lucide-react';
 import { ModeControl } from '@/components/dashboard/mode-control';
 import VestMap from '@/components/dashboard/vest-map';
 import { cn } from '@/lib/utils';
@@ -115,18 +122,38 @@ const statusToneClasses: Record<MetricStatusTone, string> = {
   info: 'border-sky-500/40 bg-sky-500/10 text-sky-700',
 };
 
-const StatusPill = ({ label, tone }: { label: string; tone: MetricStatusTone }) => (
+const statusPillSizeClasses = {
+  default: 'h-5 px-2.5 text-[10px] tracking-wide',
+  compact: 'h-4 px-2 text-[9px] tracking-normal',
+} as const;
+
+const StatusPill = ({
+  label,
+  tone,
+  size = 'default',
+}: {
+  label: string;
+  tone: MetricStatusTone;
+  size?: keyof typeof statusPillSizeClasses;
+}) => (
   <Badge
     variant="outline"
-    className={cn('text-[10px] uppercase tracking-wide', statusToneClasses[tone])}
+    className={cn(
+      'inline-flex w-fit max-w-full items-center justify-center py-0 font-semibold uppercase leading-none',
+      statusPillSizeClasses[size],
+      statusToneClasses[tone]
+    )}
   >
     {label}
   </Badge>
 );
-
-const StatusBadge = ({ metric }: { metric: NormalizedMetric<unknown> }) => (
-  <StatusPill label={metric.statusLabel} tone={metric.statusTone} />
-);
+const StatusBadge = ({
+  metric,
+  size,
+}: {
+  metric: NormalizedMetric<unknown>;
+  size?: keyof typeof statusPillSizeClasses;
+}) => <StatusPill label={metric.statusLabel} tone={metric.statusTone} size={size} />;
 
 const TopStat = ({
   label,
@@ -137,12 +164,14 @@ const TopStat = ({
   value: string;
   status?: { label: string; tone: MetricStatusTone };
 }) => (
-  <div className="flex items-center justify-between gap-3 rounded-md border border-border/60 bg-background/70 px-3 py-2">
-    <div className="min-w-0">
+  <div className="rounded-md border border-border/60 bg-background/70 px-3 py-2">
+    <div className="flex flex-wrap items-center justify-between gap-2">
       <p className="text-[11px] text-muted-foreground">{label}</p>
-      <p className="truncate text-sm font-semibold">{value}</p>
+      {status && <StatusPill label={status.label} tone={status.tone} size="compact" />}
     </div>
-    {status && <StatusPill label={status.label} tone={status.tone} />}
+    <div className="mt-1 flex flex-wrap items-center justify-between gap-2">
+      <p className="text-sm font-semibold leading-snug break-words">{value}</p>
+    </div>
   </div>
 );
 
@@ -180,11 +209,11 @@ const CompactMetricCard = ({
   helper?: string;
 }) => (
   <div className="rounded-md border border-border/60 bg-background/70 px-3 py-2">
-    <div className="flex items-center justify-between">
-      <p className="text-xs text-muted-foreground">{title}</p>
-      <StatusBadge metric={metric} />
+    <p className="text-xs text-muted-foreground">{title}</p>
+    <div className="mt-1 flex flex-wrap items-center justify-between gap-2">
+      <p className="text-lg font-semibold">{metric.formattedValue}</p>
+      <StatusBadge metric={metric} size="compact" />
     </div>
-    <p className="mt-2 text-lg font-semibold">{metric.formattedValue}</p>
     {helper && <p className="mt-1 text-[11px] text-muted-foreground">{helper}</p>}
   </div>
 );
@@ -203,11 +232,11 @@ const DerivedStatusCard = ({
   helper?: string;
 }) => (
   <div className="rounded-md border border-border/60 bg-background/70 px-3 py-2">
-    <div className="flex items-center justify-between">
-      <p className="text-xs text-muted-foreground">{title}</p>
-      <StatusPill label={statusLabel} tone={statusTone} />
+    <p className="text-xs text-muted-foreground">{title}</p>
+    <div className="mt-1 flex flex-wrap items-center justify-between gap-2">
+      <p className="text-sm font-semibold">{value}</p>
+      <StatusPill label={statusLabel} tone={statusTone} size="compact" />
     </div>
-    <p className="mt-2 text-sm font-semibold">{value}</p>
     {helper && <p className="mt-1 text-[11px] text-muted-foreground">{helper}</p>}
   </div>
 );
@@ -217,7 +246,7 @@ export default function GuardPage() {
   const router = useRouter();
   const [pairing, setPairing] = useState(false);
   const [lastValid, setLastValid] = useState<LastValidTelemetry>({});
-  const [now, setNow] = useState(() => Date.now());
+  const [now, setNow] = useState<number | null>(null);
 
   // Single source of truth for pairedVestId
   const guardVestPath = user ? `/activeVestByGuard/${user.uid}` : null;
@@ -234,6 +263,7 @@ export default function GuardPage() {
   const { data: telemetry, loading: telemetryLoading } = useRtdbValue<VestTelemetry>(vestTelemetryPath);
 
   useEffect(() => {
+    setNow(Date.now());
     const interval = setInterval(() => setNow(Date.now()), 5000);
     return () => clearInterval(interval);
   }, []);
@@ -317,13 +347,17 @@ export default function GuardPage() {
     return <Loader />;
   }
 
+  const hasNow = now !== null;
+  const nowMs = now ?? 0;
+
   // Detect if vest is offline (no data for 60+ seconds)
   const isVestOffline =
-    telemetry && telemetry.lastSeenTs
-      ? (now - telemetry.lastSeenTs) / 1000 >= 60
+    hasNow && telemetry?.lastSeenTs
+      ? (nowMs - telemetry.lastSeenTs) / 1000 >= 60
       : false;
 
-  const lastSeenAgeMs = telemetry?.lastSeenTs ? now - telemetry.lastSeenTs : undefined;
+  const lastSeenAgeMs =
+    hasNow && telemetry?.lastSeenTs ? nowMs - telemetry.lastSeenTs : undefined;
   const hasPairing = !!pairedVestId;
 
   const criticalLabels = {
@@ -609,20 +643,11 @@ export default function GuardPage() {
   })();
 
   const coolingStatus = (() => {
-    if (isVestOffline) {
+    if (isVestOffline || loopDeltaValue === undefined) {
       return {
-        value: 'Unavailable',
+        value: '—',
         statusLabel: 'Unavailable',
         statusTone: 'muted' as const,
-        helper: 'Loop delta unavailable.',
-      };
-    }
-    if (loopDeltaValue === undefined) {
-      return {
-        value: 'Unavailable',
-        statusLabel: 'Unavailable',
-        statusTone: 'muted' as const,
-        helper: 'Loop delta unavailable.',
       };
     }
     if (loopDeltaValue >= LOOP_DELTA_ACTIVE_C) {
@@ -664,7 +689,7 @@ export default function GuardPage() {
     const flowIsStale = typeof flowAgeMs === 'number' && flowAgeMs > STALE_THRESHOLDS_MS.flow;
 
     if (isVestOffline) {
-      return { value: 'Unavailable', statusLabel: 'Unavailable', statusTone: 'muted' as const };
+      return { value: '—', statusLabel: 'Unavailable', statusTone: 'muted' as const };
     }
     if (telemetry?.sensorOk?.flow === false) {
       return { value: 'Sensor failed', statusLabel: 'Sensor failed', statusTone: 'danger' as const };
@@ -673,7 +698,7 @@ export default function GuardPage() {
       return { value: 'Stale', statusLabel: 'Stale', statusTone: 'warn' as const };
     }
     if (!flowHasValue) {
-      return { value: 'Unavailable', statusLabel: 'Unavailable', statusTone: 'muted' as const };
+      return { value: '—', statusLabel: 'Unavailable', statusTone: 'muted' as const };
     }
     if (flowValue === 0) {
       return { value: 'No flow detected', statusLabel: 'No flow', statusTone: 'warn' as const };
@@ -687,10 +712,10 @@ export default function GuardPage() {
   const pcmStatus = (() => {
     const pcmValue = typeof pcmMetric.displayValue === 'number' ? pcmMetric.displayValue : undefined;
     if (isVestOffline) {
-      return { value: 'Unavailable', statusLabel: 'Unavailable', statusTone: 'muted' as const };
+      return { value: '—', statusLabel: 'Unavailable', statusTone: 'muted' as const };
     }
     if (!pcmMetric.isValid || pcmValue === undefined) {
-      return { value: 'Unavailable', statusLabel: pcmMetric.statusLabel, statusTone: pcmMetric.statusTone };
+      return { value: '—', statusLabel: pcmMetric.statusLabel, statusTone: pcmMetric.statusTone };
     }
     if (pcmValue <= PCM_TEMP_THRESHOLDS_C.coldMax) {
       return { value: 'Cold / ready', statusLabel: 'Cold', statusTone: 'ok' as const };
@@ -819,233 +844,249 @@ export default function GuardPage() {
       : { label: 'Live', tone: 'ok' as const };
   const pumpStatus = { label: pumpMetric.statusLabel, tone: pumpMetric.statusTone };
   const batteryStatus = { label: batteryMetric.statusLabel, tone: batteryMetric.statusTone };
+  const gpsMetaParts: string[] = [];
+  if (gpsStatus.label) {
+    gpsMetaParts.push(gpsStatus.label);
+  }
+  if (displayedGps && isValidNumber(displayedGps.lat) && isValidNumber(displayedGps.lng)) {
+    gpsMetaParts.push(`${displayedGps.lat.toFixed(4)}, ${displayedGps.lng.toFixed(4)}`);
+  }
+  if (displayedGps?.accuracyM) {
+    gpsMetaParts.push(`Accuracy ±${displayedGps.accuracyM.toFixed(0)} m`);
+  }
+  const gpsMeta = gpsMetaParts.join(' · ');
 
   return (
     <DashboardLayout>
       <div className="mx-auto flex w-full max-w-6xl flex-col gap-4">
         <Card>
-          <CardContent className="p-3">
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
-              <TopStat label="Vest" value={pairedVestId ?? 'Not paired'} status={onlineStatus} />
+          <CardContent className="flex flex-col gap-3 p-3 lg:flex-row lg:items-center lg:justify-between">
+            <div className="grid w-full gap-3 sm:grid-cols-2 lg:grid-cols-5">
+              <TopStat label="Vest ID" value={pairedVestId ?? 'Not paired'} status={onlineStatus} />
               <TopStat label="Mode" value={telemetry?.mode ?? '—'} status={modeStatus} />
               <TopStat label="Pump" value={pumpMetric.formattedValue} status={pumpStatus} />
               <TopStat label="Battery" value={batteryMetric.formattedValue} status={batteryStatus} />
               <TopStat label="Last update" value={formatAge(lastSeenAgeMs)} />
             </div>
-            {telemetryLoading && hasPairing && (
-              <p className="mt-2 text-[11px] text-muted-foreground">
-                Loading latest telemetry…
+            <div className="flex w-full flex-col gap-2 sm:w-auto sm:min-w-[180px]">
+              <Dialog>
+                <DialogTrigger asChild>
+                  <Button variant="outline" size="sm">
+                    <Sliders className="h-4 w-4" />
+                    Change mode
+                  </Button>
+                </DialogTrigger>
+                <DialogContent className="p-0 sm:max-w-lg">
+                  <ModeControl
+                    vestId={pairedVestId}
+                    currentMode={telemetry?.mode}
+                    isOffline={isVestOffline}
+                  />
+                </DialogContent>
+              </Dialog>
+              <VestPairingDialog
+                activeVestId={pairedVestId}
+                onPair={handlePairVest}
+                pairing={pairing}
+                loading={pairedVestIdLoading}
+                triggerVariant="outline"
+                triggerSize="sm"
+                triggerClassName="w-full"
+              />
+            </div>
+          </CardContent>
+          {(telemetryLoading && hasPairing) || (!telemetry && hasPairing && !telemetryLoading) ? (
+            <CardContent className="pt-0">
+              <p className="text-[11px] text-muted-foreground">
+                {telemetryLoading
+                  ? 'Loading latest telemetry...'
+                  : `Waiting for telemetry from ${pairedVestId}.`}
               </p>
-            )}
-            {!telemetry && hasPairing && !telemetryLoading && (
-              <p className="mt-2 text-[11px] text-muted-foreground">
-                Waiting for telemetry from {pairedVestId}.
-              </p>
-            )}
+            </CardContent>
+          ) : null}
+        </Card>
+
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base">Safety / Live Vitals</CardTitle>
+            <CardDescription>Live-only safety readings.</CardDescription>
+          </CardHeader>
+          <CardContent className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            <LiveMetricCard
+              title="Skin temp"
+              metric={skinMetric}
+              icon={<Thermometer className="h-4 w-4" />}
+              helper={criticalHelper(skinMetric)}
+            />
+            <LiveMetricCard
+              title="Body temp"
+              metric={bodyMetric}
+              icon={<Thermometer className="h-4 w-4" />}
+              helper={criticalHelper(bodyMetric)}
+            />
+            <LiveMetricCard
+              title="Heart rate"
+              metric={heartMetric}
+              icon={<HeartPulse className="h-4 w-4" />}
+              helper={criticalHelper(heartMetric)}
+            />
+            <LiveMetricCard
+              title="SpO2"
+              metric={spo2Metric}
+              icon={<Droplets className="h-4 w-4" />}
+              helper={criticalHelper(spo2Metric)}
+            />
           </CardContent>
         </Card>
 
-        <div className="grid gap-4 lg:grid-cols-12">
-          <Card className="lg:col-span-8">
-            <CardHeader className="pb-3">
-              <CardTitle className="text-base">Safety / Live Vitals</CardTitle>
-              <CardDescription>Live-only safety readings.</CardDescription>
-            </CardHeader>
-            <CardContent className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-              <LiveMetricCard
-                title="Skin temp"
-                metric={skinMetric}
-                icon={<Thermometer className="h-4 w-4" />}
-                helper={criticalHelper(skinMetric)}
-              />
-              <LiveMetricCard
-                title="Body temp"
-                metric={bodyMetric}
-                icon={<Thermometer className="h-4 w-4" />}
-                helper={criticalHelper(bodyMetric)}
-              />
-              <LiveMetricCard
-                title="Heart rate"
-                metric={heartMetric}
-                icon={<HeartPulse className="h-4 w-4" />}
-                helper={criticalHelper(heartMetric)}
-              />
-              <LiveMetricCard
-                title="SpO2"
-                metric={spo2Metric}
-                icon={<Droplets className="h-4 w-4" />}
-                helper={criticalHelper(spo2Metric)}
-              />
-            </CardContent>
-          </Card>
+        <GuardTrends vestId={pairedVestId} />
 
-          <div className="lg:col-span-4 grid gap-4">
-            <VestPairing
-              activeVestId={pairedVestId}
-              onPair={handlePairVest}
-              pairing={pairing}
-              loading={pairedVestIdLoading}
-            />
-            <ModeControl vestId={pairedVestId} currentMode={telemetry?.mode} isOffline={isVestOffline} />
+        <div className="grid items-start gap-3 lg:grid-cols-2">
+          <div className="grid gap-3">
+            <Card>
+              <CardHeader className="pb-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <CardTitle className="text-base">Cooling impact</CardTitle>
+                    <CardDescription>Derived status from loop sensors.</CardDescription>
+                  </div>
+                  <Wind className="h-4 w-4 text-muted-foreground" />
+                </div>
+              </CardHeader>
+              <CardContent className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                <DerivedStatusCard
+                  title="Cooling status"
+                  value={coolingStatus.value}
+                  statusLabel={coolingStatus.statusLabel}
+                  statusTone={coolingStatus.statusTone}
+                  helper={coolingStatus.helper}
+                />
+                <DerivedStatusCard
+                  title="Loop effect"
+                  value={loopDeltaText}
+                  statusLabel={loopDeltaStatus.label}
+                  statusTone={loopDeltaStatus.tone}
+                  helper="Heat pickup indicator"
+                />
+                <DerivedStatusCard
+                  title="Flow status"
+                  value={flowStatus.value}
+                  statusLabel={flowStatus.statusLabel}
+                  statusTone={flowStatus.statusTone}
+                />
+                <DerivedStatusCard
+                  title="PCM status"
+                  value={pcmStatus.value}
+                  statusLabel={pcmStatus.statusLabel}
+                  statusTone={pcmStatus.statusTone}
+                />
+                <DerivedStatusCard
+                  title="Pump output"
+                  value={pumpMetric.formattedValue}
+                  statusLabel={pumpMetric.statusLabel}
+                  statusTone={pumpMetric.statusTone}
+                />
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader className="pb-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <CardTitle className="text-base">Battery & Environment</CardTitle>
+                    <CardDescription>Power and ambient conditions.</CardDescription>
+                  </div>
+                  <Battery className="h-4 w-4 text-muted-foreground" />
+                </div>
+              </CardHeader>
+              <CardContent className="grid gap-3">
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <CompactMetricCard title="Battery" metric={batteryMetric} />
+                  <CompactMetricCard title="Ambient temp" metric={ambientMetric} />
+                  <CompactMetricCard title="Humidity" metric={humidityMetric} />
+                </div>
+                <details className="rounded-md border border-border/60 bg-background/70 px-3 py-2">
+                  <summary className="cursor-pointer text-xs text-muted-foreground">
+                    More battery details
+                  </summary>
+                  <div className="mt-2 grid gap-2">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-muted-foreground">Voltage</span>
+                      <span className="font-semibold">{batteryVoltageMetric.formattedValue}</span>
+                    </div>
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-muted-foreground">Current</span>
+                      <span className="font-semibold">{batteryCurrentMetric.formattedValue}</span>
+                    </div>
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-muted-foreground">Power</span>
+                      <span className="font-semibold">{batteryPowerMetric.formattedValue}</span>
+                    </div>
+                  </div>
+                </details>
+              </CardContent>
+            </Card>
           </div>
 
-          <Card className="lg:col-span-8">
-            <CardHeader className="pb-3">
-              <div className="flex items-center justify-between">
+          <div className="grid gap-3">
+            <Card>
+              <CardHeader className="flex flex-col gap-2 pb-3 md:flex-row md:items-start md:justify-between">
                 <div>
-                  <CardTitle className="text-base">Cooling impact</CardTitle>
-                  <CardDescription>Derived status from loop sensors.</CardDescription>
+                  <CardTitle className="text-base">Location</CardTitle>
+                  <CardDescription className="text-xs">
+                    {gpsMeta || 'Location unavailable.'}
+                  </CardDescription>
                 </div>
-                <Wind className="h-4 w-4 text-muted-foreground" />
-              </div>
-            </CardHeader>
-            <CardContent className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
-              <DerivedStatusCard
-                title="Cooling status"
-                value={coolingStatus.value}
-                statusLabel={coolingStatus.statusLabel}
-                statusTone={coolingStatus.statusTone}
-                helper={coolingStatus.helper}
-              />
-              <DerivedStatusCard
-                title="Loop delta"
-                value={loopDeltaText}
-                statusLabel={loopDeltaStatus.label}
-                statusTone={loopDeltaStatus.tone}
-                helper="Heat pickup indicator"
-              />
-              <DerivedStatusCard
-                title="Flow status"
-                value={flowStatus.value}
-                statusLabel={flowStatus.statusLabel}
-                statusTone={flowStatus.statusTone}
-              />
-              <DerivedStatusCard
-                title="PCM status"
-                value={pcmStatus.value}
-                statusLabel={pcmStatus.statusLabel}
-                statusTone={pcmStatus.statusTone}
-              />
-              <DerivedStatusCard
-                title="Pump output"
-                value={pumpMetric.formattedValue}
-                statusLabel={pumpMetric.statusLabel}
-                statusTone={pumpMetric.statusTone}
-              />
-            </CardContent>
-          </Card>
-
-          <Card className="lg:col-span-4">
-            <CardHeader className="pb-3">
-              <div className="flex items-center justify-between">
-                <div>
-                  <CardTitle className="text-base">Battery & Environment</CardTitle>
-                  <CardDescription>Power and ambient conditions.</CardDescription>
-                </div>
-                <Battery className="h-4 w-4 text-muted-foreground" />
-              </div>
-            </CardHeader>
-            <CardContent className="grid gap-3">
-              <div className="grid gap-3 sm:grid-cols-2">
-                <CompactMetricCard title="Battery" metric={batteryMetric} />
-                <CompactMetricCard title="Ambient temp" metric={ambientMetric} />
-                <CompactMetricCard title="Humidity" metric={humidityMetric} />
-              </div>
-              <div className="grid gap-2 sm:grid-cols-3">
-                <div className="flex items-center justify-between rounded-md border border-border/60 bg-background/70 px-3 py-2">
-                  <p className="text-[11px] text-muted-foreground">Voltage</p>
-                  <p className="text-xs font-semibold">{batteryVoltageMetric.formattedValue}</p>
-                </div>
-                <div className="flex items-center justify-between rounded-md border border-border/60 bg-background/70 px-3 py-2">
-                  <p className="text-[11px] text-muted-foreground">Current</p>
-                  <p className="text-xs font-semibold">{batteryCurrentMetric.formattedValue}</p>
-                </div>
-                <div className="flex items-center justify-between rounded-md border border-border/60 bg-background/70 px-3 py-2">
-                  <p className="text-[11px] text-muted-foreground">Power</p>
-                  <p className="text-xs font-semibold">{batteryPowerMetric.formattedValue}</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card className="lg:col-span-12">
-            <CardHeader className="flex flex-col gap-2 pb-3 md:flex-row md:items-start md:justify-between">
-              <div>
-                <CardTitle className="text-base">Location</CardTitle>
-                <CardDescription>
-                  {gpsStatusMessage ?? 'Live GNSS location and accuracy.'}
-                </CardDescription>
-              </div>
-              <StatusPill label={gpsStatus.label} tone={gpsStatus.tone} />
-            </CardHeader>
-            <CardContent>
-              <div className="grid gap-4 lg:grid-cols-[2fr,1fr]">
+                <StatusPill label={gpsStatus.label} tone={gpsStatus.tone} />
+              </CardHeader>
+              <CardContent>
                 <VestMap
                   gps={displayedGps}
                   statusMessage={gpsStatusMessage}
                   variant="plain"
                   size="compact"
                 />
-                <div className="grid gap-2">
-                  <div className="rounded-md border border-border/60 bg-background/70 px-3 py-2">
-                    <p className="text-xs text-muted-foreground">Latitude / Longitude</p>
-                    <p className="text-sm font-semibold">
-                      {displayedGps && isValidNumber(displayedGps.lat) && isValidNumber(displayedGps.lng)
-                        ? `${displayedGps.lat.toFixed(5)}, ${displayedGps.lng.toFixed(5)}`
-                        : '—'}
-                    </p>
-                  </div>
-                  <div className="rounded-md border border-border/60 bg-background/70 px-3 py-2">
-                    <p className="text-xs text-muted-foreground">Accuracy</p>
-                    <p className="text-sm font-semibold">
-                      {displayedGps?.accuracyM ? `±${displayedGps.accuracyM.toFixed(0)} m` : '—'}
-                    </p>
-                  </div>
-                  <div className="rounded-md border border-border/60 bg-background/70 px-3 py-2">
-                    <p className="text-xs text-muted-foreground">GPS age</p>
-                    <p className="text-sm font-semibold">
-                      {formatAge(telemetry?.sensorAgeMs?.gnss)}
-                    </p>
-                  </div>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
+              </CardContent>
+            </Card>
 
-          <Card className="lg:col-span-12">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-base">Diagnostics</CardTitle>
-              <CardDescription>Sensor health snapshot (optional).</CardDescription>
-            </CardHeader>
-            <CardContent className="pt-0">
-              <details className="group">
-                <summary className="cursor-pointer text-xs text-muted-foreground">
-                  View sensor health
-                </summary>
-                <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-                  {sensorHealth.map((sensor) => {
-                    const status = resolveSensorStatus(sensor);
-                    return (
-                      <div
-                        key={sensor.key}
-                        className="flex items-center justify-between rounded-md border border-border/60 bg-background/70 px-3 py-2"
-                      >
-                        <span className="text-[11px] font-medium text-muted-foreground">
-                          {sensor.label}
-                        </span>
-                        <Badge
-                          variant="outline"
-                          className={cn('text-[10px] uppercase tracking-wide', statusToneClasses[status.tone])}
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-base">Diagnostics</CardTitle>
+                <CardDescription>Sensor health snapshot (optional).</CardDescription>
+              </CardHeader>
+              <CardContent className="pt-0">
+                <details className="group">
+                  <summary className="cursor-pointer text-xs text-muted-foreground">
+                    View sensor health
+                  </summary>
+                  <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+                    {sensorHealth.map((sensor) => {
+                      const status = resolveSensorStatus(sensor);
+                      return (
+                        <div
+                          key={sensor.key}
+                          className="flex items-center justify-between rounded-md border border-border/60 bg-background/70 px-3 py-2"
                         >
-                          {status.label}
-                        </Badge>
-                      </div>
-                    );
-                  })}
-                </div>
-              </details>
-            </CardContent>
-          </Card>
+                          <span className="text-[11px] font-medium text-muted-foreground">
+                            {sensor.label}
+                          </span>
+                          <Badge
+                            variant="outline"
+                            className={cn(
+                              'h-5 px-2.5 py-0 text-[10px] font-semibold uppercase tracking-wide leading-none',
+                              statusToneClasses[status.tone]
+                            )}
+                          >
+                            {status.label}
+                          </Badge>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </details>
+              </CardContent>
+            </Card>
+          </div>
         </div>
       </div>
     </DashboardLayout>

@@ -63,7 +63,16 @@ export interface VestTelemetry {
 export interface VestHistoryPoint {
   ts: number;
   skinTemp: number;
+  bodyTemp?: number;
   batteryPct: number;
+  heartRateBpm?: number;
+  spo2Pct?: number;
+  pumpPct?: number;
+  inletTemp?: number;
+  outletTemp?: number;
+  flowRateLMin?: number;
+  ambientTemp?: number;
+  humidity?: number;
   mode: VestMode;
 }
 

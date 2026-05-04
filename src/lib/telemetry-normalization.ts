@@ -258,6 +258,7 @@ export const normalizeMetric = <T>(
   };
 };
 
+
 export interface SanitizeChartOptions {
   allowZero?: boolean;
   min?: number;
